@@ -157,10 +157,30 @@ def _cache_path(settings: Settings, key: str) -> Path:
     return Path(settings.data_dir) / "cache" / f"{key}.json"
 
 
-def load_cached(sha256: str, model: str, settings: Settings | None = None) -> ReportAnalysis | None:
-    """Return a cached analysis, or None. Phase 4 moves this behind the storage interface."""
+def load_cached(
+    sha256: str,
+    model: str,
+    settings: Settings | None = None,
+    store: Any | None = None,
+) -> ReportAnalysis | None:
+    """Return a cached analysis, or None.
+
+    Goes through the storage interface when one is supplied, so Phase 7 can share the cache
+    across the deployed app; falls back to a direct file read otherwise.
+    """
+    key = cache_key(sha256, model)
+
+    if store is not None:
+        payload = store.cache_get(key)
+        if payload is None:
+            return None
+        try:
+            return ReportAnalysis.from_dict(payload)
+        except (KeyError, TypeError):
+            return None
+
     settings = settings or get_settings()
-    path = _cache_path(settings, cache_key(sha256, model))
+    path = _cache_path(settings, key)
     if not path.exists():
         return None
     try:
@@ -170,9 +190,19 @@ def load_cached(sha256: str, model: str, settings: Settings | None = None) -> Re
         return None
 
 
-def save_cached(analysis: ReportAnalysis, settings: Settings | None = None) -> None:
+def save_cached(
+    analysis: ReportAnalysis,
+    settings: Settings | None = None,
+    store: Any | None = None,
+) -> None:
+    key = cache_key(analysis.document_sha256, analysis.model)
+
+    if store is not None:
+        store.cache_set(key, analysis.to_dict())
+        return
+
     settings = settings or get_settings()
-    path = _cache_path(settings, cache_key(analysis.document_sha256, analysis.model))
+    path = _cache_path(settings, key)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(analysis.to_dict(), indent=2), encoding="utf-8")
 
@@ -257,6 +287,7 @@ def run_llm_extraction(
     max_tokens: int = 4000,
     use_cache: bool = True,
     progress: Callable[[int, int, str], None] | None = None,
+    store: Any | None = None,
 ) -> ReportAnalysis:
     """Analyse a document with the LLM and return the validated result.
 
@@ -267,7 +298,7 @@ def run_llm_extraction(
     max_chunks = max_chunks if max_chunks is not None else settings.max_chunks_per_report
 
     if use_cache:
-        cached = load_cached(doc.sha256, model, settings)
+        cached = load_cached(doc.sha256, model, settings, store=store)
         if cached is not None:
             return cached
 
@@ -321,7 +352,7 @@ def run_llm_extraction(
     )
 
     if use_cache:
-        save_cached(analysis, settings)
+        save_cached(analysis, settings, store=store)
 
     return analysis
 

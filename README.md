@@ -12,19 +12,19 @@ every claim it makes is checked against the source text before it reaches the gr
 
 ## Status
 
-**Phase 3 of 7 — LLM entity extraction with validation.** The app accepts a PDF or HTML report,
-extracts indicators with regular expressions, then asks Claude for the threat entities and the
-relationships between them. Every claim the model makes is checked against the source text
-before it is kept: quotes must be verbatim, names must appear in the report, and indicator
-values must already have been found by regex. Results are cached by file hash so re-analysing a
-report costs nothing. The graph, storage and access control are the subject of later phases.
+**Phase 4 of 7 — knowledge graph and explorer.** The app accepts a PDF or HTML report, extracts
+indicators with regular expressions, asks Claude for the threat entities and relationships
+(validating every claim against the source text), and merges the result into one deduplicated
+knowledge graph stored on disk. A multipage Streamlit UI lets you explore it: click a node to
+see what it is, what it relates to, which indicators it touches and the exact source quotes.
+Guardrail hardening, agent mode and deployment are the subject of later phases.
 
 | Phase | Scope | State |
 | --- | --- | --- |
 | 1 | Repo setup, secret scanning, Streamlit skeleton, PDF/HTML ingestion | Done |
 | 2 | Regex IOC extraction, refanging, false-positive flags, evaluation | Done |
 | 3 | Claude extraction with schema, grounding validation, caching, cost tracking | Done |
-| 4 | Knowledge graph, normalization, dedup, versioned storage, explorer | Not started |
+| 4 | Knowledge graph, normalization, dedup, versioned storage, explorer | Done |
 | 5 | Layered guardrails, poisoned test corpus, threat model | Not started |
 | 6 | Bounded agent mode with ATT&CK mapping, run traces, evaluation | Not started |
 | 7 | Supabase storage, passwords, daily caps, deployment, v1.0 | Not started |
@@ -41,7 +41,9 @@ report costs nothing. The graph, storage and access control are the subject of l
 - **IOC extraction:** `ioc-finder` (primary), `iocextract` (SHA-512 only)
 - **LLM:** the official `anthropic` SDK with native structured outputs, behind a provider
   interface so another provider can be added
-- **Planned:** NetworkX for the graph, Supabase for deployed storage
+- **Graph:** NetworkX `MultiDiGraph`, `streamlit-agraph` for the interactive view, `rapidfuzz`
+  for duplicate detection
+- **Planned:** Supabase for deployed storage
 
 ## Local setup
 
@@ -101,6 +103,14 @@ extract/            IOC extraction and LLM extraction
   validate.py       Grounding, indicator and integrity checks on model output
   llm_extract.py    Orchestration, merging, caching, cost tracking
 llm/                Provider interface, Anthropic provider, price table
+graph/              Knowledge graph
+  model.py          Node/edge shapes, neighborhood and detail queries
+  normalize.py      Name normalization, alias map, duplicate detection
+  merge.py          Idempotent merge and report removal
+  persist.py        Merge-and-save with version-conflict retry
+  summaries.py      Grounded node summaries, cached by evidence hash
+storage/            GraphStore interface, local JSON backend, factory
+pages/              Streamlit pages: Ingest, Graph, Reports, Maintenance
 scripts/            fetch_fixtures.py, build_expected.py, eval_regex.py
 llm/                LLM provider interface (Phase 3)
 graph/              Knowledge graph (Phase 4)
@@ -203,6 +213,38 @@ first. Only the highest-priority chunks are sent — IOC-section pages, then pag
 or ATT&CK technique ids — capped at `MAX_CHUNKS_PER_REPORT` (default 6), with the number skipped
 reported. Results are cached by file hash, model and prompt version, so re-analysing the same
 report makes no call and costs nothing.
+
+## Exploring the graph
+
+Every analysed report merges into one graph, so an entity named in three advisories is **one
+node with three sources**, not three nodes.
+
+**Deduplication** happens on a normalized key. `APT 21`, `APT-21` and `apt21` all key to
+`apt21`; CVE ids are case-normalized; an ATT&CK technique is keyed by its id, so `T1053.005` and
+"Scheduled Task/Job: Cron" are the same node. Normalization only collapses *mechanical*
+differences — spacing, punctuation, case. It never merges two names because they look similar:
+similar pairs are listed on the Maintenance page for a human to judge, and a real merge is
+recorded by editing `graph/aliases.json`. Automatic fuzzy merging would eventually merge two
+genuinely different threat actors, which is a worse failure than a duplicate node.
+
+**The view is always a neighborhood**, never the whole graph — past a few hundred nodes a full
+graph is an unreadable hairball, and the real question is "what is this one thing connected to".
+Select a node and the explorer shows its neighbors to a depth you choose, capped at a node limit.
+Clicking a node in the canvas, or a relationship in the detail panel, navigates to it, and a
+breadcrumb tracks where you have been.
+
+The detail panel shows the node's type and aliases, which reports it appears in, its
+relationships grouped by relation, its related indicators (defanged), the exact evidence quotes
+with their source report, and an optional summary. **Summaries are generated only on click**,
+from that node's evidence quotes alone, and cached against a hash of those quotes — if a later
+report adds evidence, the summary is marked outdated rather than silently presented as current.
+
+**Storage** is `data/graph.json` behind a `GraphStore` interface, with a Supabase backend coming
+in Phase 7. Writes are atomic (temp file, fsync, `os.replace`) so an interrupted save cannot
+truncate the graph, and the last five versions are kept as backups restorable from the
+Maintenance page. Saves use an optimistic version number: if the stored version changed since
+load, the save is rejected, and the app reloads and re-merges onto the newer graph rather than
+overwriting someone else's upload. Merging is idempotent, which is what makes that retry safe.
 
 ## Security
 
