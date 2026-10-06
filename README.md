@@ -12,12 +12,12 @@ every claim it makes is checked against the source text before it reaches the gr
 
 ## Status
 
-**Phase 4 of 7 — knowledge graph and explorer.** The app accepts a PDF or HTML report, extracts
-indicators with regular expressions, asks Claude for the threat entities and relationships
-(validating every claim against the source text), and merges the result into one deduplicated
-knowledge graph stored on disk. A multipage Streamlit UI lets you explore it: click a node to
-see what it is, what it relates to, which indicators it touches and the exact source quotes.
-Guardrail hardening, agent mode and deployment are the subject of later phases.
+**Phase 5 of 7 — layered guardrails.** The app ingests a PDF or HTML report, strips hidden
+content, screens for prompt injection, extracts indicators with regular expressions, asks Claude
+for threat entities and relationships, validates every claim against the source text, and merges
+the result into one deduplicated knowledge graph you can explore. Ten poisoned test reports prove
+the guardrails work and a benign control proves they do not over-block. Agent mode and deployment
+are the subject of later phases.
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ Guardrail hardening, agent mode and deployment are the subject of later phases.
 | 2 | Regex IOC extraction, refanging, false-positive flags, evaluation | Done |
 | 3 | Claude extraction with schema, grounding validation, caching, cost tracking | Done |
 | 4 | Knowledge graph, normalization, dedup, versioned storage, explorer | Done |
-| 5 | Layered guardrails, poisoned test corpus, threat model | Not started |
+| 5 | Layered guardrails, poisoned test corpus, threat model | Done |
 | 6 | Bounded agent mode with ATT&CK mapping, run traces, evaluation | Not started |
 | 7 | Supabase storage, passwords, daily caps, deployment, v1.0 | Not started |
 
@@ -79,6 +79,8 @@ All settings live in `.env`, which is never committed. See `.env.example` for th
 | `MAX_PAGES` | `50` | Largest accepted PDF |
 | `MAX_CHUNKS_PER_REPORT` | `6` | Chunks of one report sent to the model; the main cost control |
 | `MAX_OUTPUT_TOKENS` | `4000` | Output budget per chunk |
+| `INJECTION_BLOCK_ON` | `high` | `high`, `medium` (over-blocks) or `none` (report only) |
+| `INJECTION_CLASSIFIER` | `none` | Hook for a model-based classifier; only `none` is implemented |
 
 ## Project layout
 
@@ -103,6 +105,11 @@ extract/            IOC extraction and LLM extraction
   validate.py       Grounding, indicator and integrity checks on model output
   llm_extract.py    Orchestration, merging, caching, cost tracking
 llm/                Provider interface, Anthropic provider, price table
+guards/             Guardrail layers
+  sanitize_html.py  Removes hidden content: CSS, comments, aria-hidden, hiding classes
+  sanitize_pdf.py   Quarantines tiny, white, off-page and invisible-render spans
+  injection.py      Heuristic prompt-injection scanner with a HIGH/MEDIUM policy
+  pipeline.py       Where the layers meet the pipeline; the SecurityReport
 graph/              Knowledge graph
   model.py          Node/edge shapes, neighborhood and detail queries
   normalize.py      Name normalization, alias map, duplicate detection
@@ -113,6 +120,11 @@ storage/            GraphStore interface, local JSON backend, factory
 pages/              Streamlit pages: Ingest, Graph, Reports, Maintenance
 scripts/            fetch_fixtures.py, build_expected.py, eval_regex.py
 llm/                LLM provider interface (Phase 3)
+guards/             Guardrail layers
+  sanitize_html.py  Removes hidden content: CSS, comments, aria-hidden, hiding classes
+  sanitize_pdf.py   Quarantines tiny, white, off-page and invisible-render spans
+  injection.py      Heuristic prompt-injection scanner with a HIGH/MEDIUM policy
+  pipeline.py       Where the layers meet the pipeline; the SecurityReport
 graph/              Knowledge graph (Phase 4)
 guards/             Guardrail layers (Phase 5)
 agent/              Bounded agent mode (Phase 6)
@@ -245,6 +257,43 @@ truncate the graph, and the last five versions are kept as backups restorable fr
 Maintenance page. Saves use an optimistic version number: if the stored version changed since
 load, the save is rejected, and the app reloads and re-merges onto the newer graph rather than
 overwriting someone else's upload. Merging is idempotent, which is what makes that retry safe.
+
+## Security design
+
+Full threat model, layer-by-layer design, poisoned-corpus results and known limitations:
+**[docs/SECURITY.md](docs/SECURITY.md)**.
+
+The short version. Two things are untrusted: the **report**, because whoever uploads chooses the
+text the model reads, and the **model's output**, because it is derived from that text. Four
+layers, built on the assumption that each will eventually be evaded:
+
+1. **Input sanitization.** Hidden content is quarantined before anything reads it — CSS-hidden
+   elements, HTML comments, `aria-hidden`, hiding classes, white-on-white text, sub-4pt PDF
+   spans, off-page spans. Quarantined text is excluded from regex extraction *and* the model,
+   because hidden text can plant a fake indicator as easily as a fake instruction. A heuristic
+   scanner then excludes chunks carrying high-severity injection patterns.
+2. **Prompt structure.** Report text is wrapped in `<report-{nonce}>` with 8 random hex
+   characters per request, so the delimiter cannot be predicted or closed. The untrusted-data
+   rule is stated before *and* after the report block. The model gets no tools at all.
+3. **Output validation.** Quotes must appear verbatim in the source; indicator values must
+   already have been found by regex; names must appear in the text; relationship endpoints must
+   resolve. The model's own output is itself scanned for injection. Every drop is recorded with
+   a reason and shown in the UI.
+4. **Least privilege.** No write tools, ever. Nothing opens, fetches or executes anything found
+   in a report. No untrusted text reaches `st.markdown`, `st.write`, `st.html` or
+   `unsafe_allow_html` — a test fails the build if any appears.
+
+**The layer doing the real work is output validation**, not the injection scanner. The scanner is
+a heuristic whose patterns are public in this repo and can be rephrased around; it catches the
+obvious attempts and makes them visible. But a successful injection still has to produce an
+entity whose evidence is a verbatim quote from the document and whose indicators were found
+independently by regex.
+
+Ten poisoned reports (`tests/poisoned/`, generator committed) cover visible and hidden injection,
+delimiter escape, fake-indicator planting, markdown exfiltration and a bad relation type. All ten
+behave as expected, and a **benign control report** is included because a guardrail suite that
+only proves it blocks things has not shown it avoids blocking everything. All three real CISA
+advisories are asserted to pass screening.
 
 ## Security
 

@@ -324,6 +324,106 @@ def render_analysis(analysis: ReportAnalysis) -> None:
                 st.text(quote)
 
 
+def render_security(document: Document) -> None:
+    """Guardrail findings for this upload: what was removed and what looked hostile."""
+    security = getattr(document, "security", None)
+    if security is None:
+        return
+
+    st.subheader("Security checks")
+
+    status = security.status
+    if status == "suspicious":
+        st.error(
+            "This report contains content that looks like a prompt-injection attempt. "
+            "Affected chunks are excluded from the model."
+        )
+    elif status == "warnings":
+        st.warning("Content was removed from this report before processing. Details below.")
+    else:
+        st.success("No hidden content or injection patterns were found.")
+
+    columns = st.columns(3)
+    columns[0].metric("Quarantined", security.quarantined_count)
+    columns[1].metric("Injection findings", len(security.injection_findings))
+    columns[2].metric("Document risks", len(security.document_risks))
+
+    if security.quarantine_counts:
+        st.caption("Removed before extraction, by reason")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"reason": reason, "count": count}
+                    for reason, count in sorted(security.quarantine_counts.items())
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "Quarantined content is excluded from BOTH indicator extraction and the model: "
+            "hidden text can plant a fake indicator as easily as a fake instruction."
+        )
+
+    if security.document_risks:
+        st.caption("Document-level risks (reported, never opened or executed)")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"risk": risk, "count": count}
+                    for risk, count in sorted(security.document_risks.items())
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    if security.quarantined_items:
+        with st.expander(f"View quarantined content ({len(security.quarantined_items)} item(s))"):
+            st.warning(
+                "This is untrusted content that was removed. It is shown as plain text and is "
+                "never sent to the model."
+            )
+            for item in security.quarantined_items:
+                st.caption(f"{item['reason']} — {item.get('where', '')}")
+                # st.text: quarantined content is the most hostile text in the app.
+                st.text(item["preview"])
+
+
+def render_injection_findings(document: Document) -> None:
+    security = getattr(document, "security", None)
+    if security is None or not security.injection_findings:
+        return
+    with st.expander(f"Injection findings ({len(security.injection_findings)})"):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "severity": f["severity"],
+                        "pattern": f["pattern"],
+                        "chunk": f.get("chunk", ""),
+                        "pages": f.get("pages", ""),
+                        "snippet": f["snippet"],
+                    }
+                    for f in security.injection_findings
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "HIGH findings exclude the chunk from the model. MEDIUM findings are shown but the "
+            "chunk is still sent, because those patterns also match legitimate advisory prose."
+        )
+    if security.excluded_chunks:
+        st.warning(
+            f"{len(security.excluded_chunks)} chunk(s) were excluded from the model: "
+            + ", ".join(
+                f"{c['pages']} ({', '.join(c['reasons'])})" for c in security.excluded_chunks
+            )
+        )
+
+
 def render_add_to_graph(
     document: Document, extraction: IOCExtraction, analysis: ReportAnalysis
 ) -> None:
@@ -395,6 +495,8 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
         )
         return
 
+    render_injection_findings(document)
+
     chunks, skipped = chunk_document(document, extraction, max_chunks=settings.max_chunks_per_report)
     worst_case = estimate_max_cost(chunks, model, settings.max_output_tokens)
 
@@ -429,6 +531,7 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
             model=model,
             max_tokens=settings.max_output_tokens,
             progress=progress,
+            security_report=getattr(document, "security", None),
         )
     except LLMError as exc:
         status.update(label="Analysis failed", state="error")
@@ -474,6 +577,9 @@ def main() -> None:
 
     st.caption("SHA-256 of the uploaded file")
     st.code(document.sha256, language=None)
+
+    st.divider()
+    render_security(document)
 
     render_pages(document)
     render_tables(document)

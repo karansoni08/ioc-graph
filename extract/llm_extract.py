@@ -74,6 +74,8 @@ class ReportAnalysis:
     chunks_skipped: int = 0
     duration_ms: int = 0
     from_cache: bool = False
+    # Guardrail findings for this report (guards.pipeline.SecurityReport.to_dict()).
+    security: dict[str, Any] = field(default_factory=dict)
 
     @property
     def input_tokens(self) -> int:
@@ -112,6 +114,7 @@ class ReportAnalysis:
             "chunks_processed": self.chunks_processed,
             "chunks_skipped": self.chunks_skipped,
             "duration_ms": self.duration_ms,
+            "security": self.security,
         }
 
     @classmethod
@@ -140,6 +143,7 @@ class ReportAnalysis:
             chunks_processed=payload.get("chunks_processed", 0),
             chunks_skipped=payload.get("chunks_skipped", 0),
             duration_ms=payload.get("duration_ms", 0),
+            security=payload.get("security", {}),
             from_cache=True,
         )
 
@@ -288,6 +292,7 @@ def run_llm_extraction(
     use_cache: bool = True,
     progress: Callable[[int, int, str], None] | None = None,
     store: Any | None = None,
+    security_report: Any | None = None,
 ) -> ReportAnalysis:
     """Analyse a document with the LLM and return the validated result.
 
@@ -304,6 +309,14 @@ def run_llm_extraction(
 
     started = time.monotonic()
     chunks, skipped = chunk_document(doc, ioc_extraction, max_chunks=max_chunks)
+
+    # Guardrail layer 1c: a chunk carrying a HIGH-severity injection pattern is never sent.
+    # The cheapest way to defeat an injection is not to pass it to the model at all.
+    from guards.pipeline import SecurityReport, screen_chunks
+
+    security = security_report if security_report is not None else SecurityReport()
+    chunks = screen_chunks(chunks, security, block_on=settings.injection_block_on)
+
     schema = extraction_json_schema()
 
     entities: dict[str, MergedEntity] = {}
@@ -333,6 +346,9 @@ def run_llm_extraction(
             usage=usage,
         )
 
+        if chunk_report.suspicious:
+            security.suspicious_chunks.append(chunk.index)
+
         _merge_into(entities, relationships, result)
         combined_report.merge(chunk_report)
         usages.append(chunk_usage)
@@ -346,7 +362,8 @@ def run_llm_extraction(
         validation=combined_report,
         chunk_usage=usages,
         chunks_processed=len(chunks),
-        chunks_skipped=skipped,
+        chunks_skipped=skipped + len(security.excluded_chunks),
+        security=security.to_dict(),
         duration_ms=int((time.monotonic() - started) * 1000),
         from_cache=False,
     )

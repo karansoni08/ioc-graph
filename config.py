@@ -64,6 +64,10 @@ class Settings:
     # Phase 3: how many chunks of one report may be sent to the model. The main cost control.
     max_chunks_per_report: int = 6
     max_output_tokens: int = 4000
+    # Phase 5 guardrail policy. "high" excludes only HIGH-severity chunks (the default),
+    # "medium" is stricter and will over-block, "none" reports without excluding anything.
+    injection_block_on: str = "high"
+    injection_classifier: str = "none"
 
     @property
     def max_file_bytes(self) -> int:
@@ -83,6 +87,8 @@ def get_settings() -> Settings:
         data_dir=_lookup("DATA_DIR") or "data",
         max_chunks_per_report=_lookup_int("MAX_CHUNKS_PER_REPORT", 6),
         max_output_tokens=_lookup_int("MAX_OUTPUT_TOKENS", 4000),
+        injection_block_on=(_lookup("INJECTION_BLOCK_ON") or "high").lower(),
+        injection_classifier=(_lookup("INJECTION_CLASSIFIER") or "none").lower(),
     )
 
 

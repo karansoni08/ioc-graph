@@ -97,19 +97,44 @@ def load_document(filename: str, data: bytes, settings: Settings | None = None) 
         )
 
     file_type = detect_file_type(filename, data)
+    security = None
 
     if file_type == "pdf":
         # Imported here so that HTML-only use does not pay the PyMuPDF import cost.
         from .pdf import extract_pdf
 
         pages, tables = extract_pdf(data, settings.max_pages)
+
+        # Guardrail layer 1b: rebuild the page text from visible spans only, quarantining
+        # hidden ones. Done after extract_pdf so its validation (encryption, page limit,
+        # scanned-image detection) still produces the friendly errors.
+        from guards.pipeline import from_pdf_report
+        from guards.sanitize_pdf import sanitize_pdf
+
+        try:
+            clean_pages, pdf_report = sanitize_pdf(data, settings.max_pages)
+        except Exception:
+            # Sanitization must never cost us the document; fall back to the unsanitized text
+            # and say nothing was checked rather than silently claiming it was.
+            clean_pages, pdf_report = None, None
+        if clean_pages and any(page.strip() for page in clean_pages):
+            pages = clean_pages
+            security = from_pdf_report(pdf_report)
     else:
         markup = decode_text(data)
         if markup is None:  # pragma: no cover - detect_file_type already decoded it
             raise IngestError(f"'{filename}' could not be read as text.")
-        pages, tables = [extract_html(markup)], []
 
-    return Document(
+        # Guardrail layer 1a.
+        from guards.pipeline import from_html_report
+
+        from .html import extract_html_with_report
+
+        text, html_report = extract_html_with_report(markup)
+        pages, tables = [text], []
+        security = from_html_report(html_report)
+
+    document = Document(
         filename=filename,
         file_type=file_type,
         sha256=sha256_bytes(data),
@@ -119,3 +144,7 @@ def load_document(filename: str, data: bytes, settings: Settings | None = None) 
         tables=tables,
         text=join_pages(pages),
     )
+    # Attached rather than a model field: the guards package imports ingest.models, so a typed
+    # field here would be a circular import.
+    document.security = security  # type: ignore[attr-defined]
+    return document

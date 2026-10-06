@@ -140,6 +140,8 @@ def merge_report(
         ingested_by=ingested_by,
         cost_usd=round(analysis.cost_usd, 6),
         mode=mode,
+        # Guardrail outcome for this report, shown as a badge on the Reports page.
+        security_status=(analysis.security or {}).get("status", "clean"),
         reports=[],
         evidence=[],
         descriptions=[],

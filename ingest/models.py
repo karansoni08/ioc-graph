@@ -26,6 +26,10 @@ class Document(BaseModel):
     )
     text: str = Field(default="", description="All pages joined with page markers.")
 
+    # Set by the loader after sanitization (guards.pipeline.SecurityReport). Not typed, because
+    # `guards` imports this module and a real annotation would be a circular import.
+    model_config = {"extra": "allow"}
+
     @property
     def char_count(self) -> int:
         return len(self.text)

@@ -42,6 +42,10 @@ def main() -> None:
         return
 
     st.caption(f"Graph version {version}")
+    st.caption(
+        "Security column: clean (nothing found), warnings (content removed before "
+        "processing), suspicious (injection patterns found; affected chunks were excluded)."
+    )
     st.dataframe(
         pd.DataFrame(
             [
@@ -50,6 +54,7 @@ def main() -> None:
                     "ingested": report.get("ingested_at", "")[:19].replace("T", " "),
                     "by": report.get("ingested_by", "") or "—",
                     "mode": report.get("mode", "pipeline"),
+                    "security": report.get("security_status", "clean"),
                     "entities": _entity_count(graph, report["id"]),
                     "cost": format_cost(report.get("cost_usd", 0.0)),
                     "sha256": report.get("sha256", "")[:12],

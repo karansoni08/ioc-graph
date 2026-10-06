@@ -30,6 +30,7 @@ from .iocs import refang
 from .models import IOCExtraction
 from .schema import (
     MAX_ENTITIES,
+    MAX_NAME_CHARS,
     MAX_RELATIONSHIPS,
     Entity,
     ExtractionResult,
@@ -43,6 +44,10 @@ REASON_UNKNOWN_INDICATOR = "unknown_indicator"
 REASON_NAME_NOT_IN_TEXT = "name_not_in_text"
 REASON_DANGLING = "dangling"
 REASON_LIMIT = "limit"
+# Phase 5: the model's own output carried an injection pattern, which means either the model
+# echoed an attack back or it is relaying one. Either way the item does not belong in the graph.
+REASON_INJECTED_OUTPUT = "injected_output"
+REASON_BAD_NAME = "bad_name"
 
 ALL_REASONS = (
     REASON_SCHEMA,
@@ -51,7 +56,12 @@ ALL_REASONS = (
     REASON_NAME_NOT_IN_TEXT,
     REASON_DANGLING,
     REASON_LIMIT,
+    REASON_INJECTED_OUTPUT,
+    REASON_BAD_NAME,
 )
+
+_URL_IN_NAME = re.compile(r"https?://|hxxps?://|\bwww\.", re.IGNORECASE)
+_RESIDUAL_MARKUP = re.compile(r"<[a-zA-Z/!]|!\[[^\]]*\]\(|\]\(https?://")
 
 _HTML_TAG = re.compile(r"<[^>]{0,200}>")
 _MARKDOWN_IMAGE = re.compile(r"!\[[^\]]{0,200}\]\([^)]{0,500}\)")
@@ -184,6 +194,46 @@ class ValidationReport:
         self.chunk_failed = self.chunk_failed or other.chunk_failed
 
 
+def output_is_injected(*values: str) -> str | None:
+    """Return the matched pattern name if any model-supplied string carries a HIGH pattern.
+
+    Guardrail layer 3 applied to the model's own words. If an injection made it through the
+    input layers and the model repeated it in a description or a name, that text must not be
+    stored: it would sit in the graph, be shown to other users, and be fed back to the model as
+    evidence when a summary is generated later.
+    """
+    # Imported here: `guards` imports `extract.schema`, so a module-level import would cycle.
+    from guards.injection import scan_for_injection
+
+    for value in values:
+        if not value:
+            continue
+        scan = scan_for_injection(value)
+        if scan.has_high:
+            return scan.high[0].pattern_name
+    return None
+
+
+def name_is_unacceptable(name: str) -> str | None:
+    """Reject entity names that cannot be legitimate. Returns a reason, or None."""
+    if "\n" in name or "\r" in name:
+        return "name contains a line break"
+    if len(name) > MAX_NAME_CHARS:
+        return f"name longer than {MAX_NAME_CHARS} characters"
+    if _URL_IN_NAME.search(name):
+        return "name contains a URL"
+    return None
+
+
+def has_residual_markup(*values: str) -> bool:
+    """Defence in depth: markup that survived stripping means something is wrong.
+
+    `strip_unsafe_text` should have removed all of it. If any remains, the safest response is to
+    drop the item rather than work out why the stripper missed it.
+    """
+    return any(_RESIDUAL_MARKUP.search(value) for value in values if value)
+
+
 def _indicator_lookup(ioc_extraction: IOCExtraction) -> dict[str, str]:
     """Normalized indicator value -> canonical value, for the indicator check."""
     lookup: dict[str, str] = {}
@@ -239,6 +289,31 @@ def validate(
 
         if not name:
             report.drop("entity", REASON_NAME_NOT_IN_TEXT, "name empty after sanitization")
+            continue
+
+        # 2b. Phase 5: the model's own output must not carry an injection, and a name must look
+        # like a name. Checked before grounding so an injected string is never echoed into a
+        # drop reason that the UI then displays.
+        injected = output_is_injected(name, description, *aliases)
+        if injected:
+            report.drop(
+                "entity",
+                REASON_INJECTED_OUTPUT,
+                f"model output contained an injection pattern ({injected})",
+                name[:60],
+            )
+            continue
+
+        bad_name = name_is_unacceptable(name)
+        if bad_name and entity.type != "indicator":
+            # Indicators legitimately contain URLs, so the URL rule does not apply to them.
+            report.drop("entity", REASON_BAD_NAME, bad_name, name[:60])
+            continue
+
+        if has_residual_markup(name, description):
+            report.drop(
+                "entity", REASON_INJECTED_OUTPUT, "markup survived sanitization", name[:60]
+            )
             continue
 
         # 3. Grounding.
@@ -309,6 +384,16 @@ def validate(
 
         if not source or not target:
             report.drop("relationship", REASON_DANGLING, "empty source or target", label)
+            continue
+
+        injected = output_is_injected(source, target)
+        if injected:
+            report.drop(
+                "relationship",
+                REASON_INJECTED_OUTPUT,
+                f"model output contained an injection pattern ({injected})",
+                label[:60],
+            )
             continue
 
         if not evidence or normalize_for_grounding(evidence) not in normalized_chunk:
