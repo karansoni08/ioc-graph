@@ -7,3 +7,7 @@ python-dotenv==1.2.4
 pydantic==2.13.5
 pytest==9.1.1
 pre-commit==4.6.2
+ioc-finder==9.4.1
+iocextract==1.16.1
+ioc-fanger==5.1.1
+requests==2.34.2
