@@ -1,0 +1,20 @@
+# Committed. Real secrets live in .streamlit/secrets.toml, which is gitignored.
+
+[theme]
+base = "dark"
+primaryColor = "#3d8bcd"
+
+[server]
+# Matches MAX_FILE_MB in config.py. Streamlit rejects larger uploads before our own check runs,
+# so these two numbers must agree or the app's error message would never be reached.
+maxUploadSize = 5
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Hides the "Deploy" and source-view menu items from viewers of the shared link.
+toolbarMode = "minimal"
+showErrorDetails = false

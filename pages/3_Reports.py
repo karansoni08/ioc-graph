@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from auth import ROLE_VIEW, require_access
 from config import get_settings
 from graph.model import list_reports
 from graph.persist import remove_and_save
@@ -26,6 +27,8 @@ def _entity_count(graph, report_id: str) -> int:
 
 
 def main() -> None:
+    access = require_access(ROLE_VIEW)
+
     st.title("Ingested reports")
 
     store = get_store(settings)
@@ -65,6 +68,9 @@ def main() -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+    if not access.can_upload:
+        return
 
     st.divider()
     st.subheader("Remove a report from the graph")

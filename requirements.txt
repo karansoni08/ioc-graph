@@ -16,3 +16,4 @@ networkx==3.7
 streamlit-agraph==0.0.45
 rapidfuzz==3.14.6
 rank_bm25==0.2.2
+supabase==2.32.0

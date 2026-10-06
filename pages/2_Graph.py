@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 from streamlit_agraph import Config, Edge, Node, agraph
 
+from auth import ROLE_VIEW, require_access
 from config import get_settings, has_api_key
 from extract.display import defang
 from graph.model import (
@@ -118,7 +119,8 @@ def render_detail(graph, node_id: str) -> None:
     else:
         st.caption("No summary yet.")
 
-    if has_api_key():
+    # A summary costs money, so the view role sees cached summaries only.
+    if has_api_key() and st.session_state.get("_can_spend", True):
         label = "Regenerate summary" if summary else "Generate summary"
         st.caption("Generated once from this node's evidence quotes only, then cached.")
         if st.button(label, key=f"summary_{node_id}"):
@@ -144,6 +146,8 @@ def render_detail(graph, node_id: str) -> None:
                 st.success(f"Summary generated ({format_cost(cost)}).")
                 st.text(text)
                 st.rerun()
+    elif not st.session_state.get("_can_spend", True):
+        st.caption("Generating a summary needs upload access. Cached summaries are shown above.")
     else:
         st.caption("Set ANTHROPIC_API_KEY to generate summaries.")
 
@@ -206,6 +210,9 @@ def render_detail(graph, node_id: str) -> None:
 
 
 def main() -> None:
+    access = require_access(ROLE_VIEW)
+    st.session_state["_can_spend"] = access.can_spend
+
     st.title("Explore the graph")
 
     store = get_store(settings)

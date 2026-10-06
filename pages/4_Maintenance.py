@@ -7,6 +7,7 @@ import json
 import pandas as pd
 import streamlit as st
 
+from auth import ROLE_UPLOAD, require_access
 from config import get_settings
 from graph.model import to_json
 from graph.normalize import ALIASES_PATH, find_possible_duplicates
@@ -20,6 +21,8 @@ settings = get_settings()
 
 
 def main() -> None:
+    require_access(ROLE_UPLOAD)
+
     st.title("Maintenance")
 
     store = get_store(settings)

@@ -12,6 +12,7 @@ import json
 import pandas as pd
 import streamlit as st
 
+from auth import ROLE_UPLOAD, require_access
 from config import get_settings, has_api_key
 from extract.chunking import chunk_document
 from extract.display import defang, format_pages
@@ -23,7 +24,7 @@ from extract.llm_extract import (
     run_llm_extraction,
 )
 from extract.models import IOC_TYPES, IOCExtraction
-from agent.attack_data import is_available as attack_available
+from agent.attack_data import ensure_available as ensure_attack_available
 from agent.loop import run_agent
 from graph.persist import merge_and_save
 from ingest.errors import IngestError
@@ -33,10 +34,17 @@ from llm.base import LLMError
 from llm.factory import get_provider
 from llm.pricing import estimate_cost, format_cost, is_known_model
 from storage.base import StorageError, VersionConflict
+from usage import KIND_AGENT, KIND_REPORT, limit_message, reserve, settle
 from storage.factory import get_store
 from storage.local import LocalGraphStore
 
 st.set_page_config(page_title="Ingest — IOC Graph", layout="wide")
+
+
+@st.cache_resource(show_spinner="Fetching MITRE ATT&CK data (first run only)…")
+def _attack_ready() -> bool:
+    """Fetch the ATT&CK bundle once per container; the deployed disk is wiped on restart."""
+    return ensure_attack_available()
 
 settings = get_settings()
 
@@ -521,6 +529,12 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
         st.caption("Analysis runs only when you click. Nothing has been sent yet.")
         return
 
+    store = get_store(settings)
+    reservation = reserve(store, settings, KIND_REPORT, worst_case)
+    if not reservation.allowed:
+        st.error(reservation.reason or limit_message(settings, KIND_REPORT))
+        return
+
     status = st.status("Analyzing…", expanded=True)
 
     def progress(index: int, total: int, label: str) -> None:
@@ -536,11 +550,17 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
             max_tokens=settings.max_output_tokens,
             progress=progress,
             security_report=getattr(document, "security", None),
+            store=store,
         )
     except LLMError as exc:
         status.update(label="Analysis failed", state="error")
+        # The reservation stands at the estimate, which over-counts. Safe direction to fail.
+        settle(store, reservation, 0.0)
         st.error(str(exc))
         return
+
+    # Bring the reserved worst case down to what was actually spent.
+    settle(store, reservation, analysis.cost_usd)
 
     status.update(label="Analysis complete", state="complete")
     render_analysis(analysis)
@@ -564,7 +584,7 @@ def render_agent_section(
         st.caption("Set ANTHROPIC_API_KEY to enable agent mode.")
         return
 
-    if not attack_available():
+    if not _attack_ready():
         st.warning(
             "MITRE ATT&CK data is missing, so technique mapping would be unavailable. "
             "Run `python scripts/fetch_attack.py` first."
@@ -589,6 +609,11 @@ def render_agent_section(
         return
 
     store = get_store(settings)
+    reservation = reserve(store, settings, KIND_AGENT, worst_case)
+    if not reservation.allowed:
+        st.error(reservation.reason or limit_message(settings, KIND_AGENT))
+        return
+
     try:
         snapshot, _ = store.load()
     except StorageError:
@@ -610,8 +635,11 @@ def render_agent_section(
         )
     except Exception as exc:  # noqa: BLE001 - surfaced to the user, never a stack trace
         status.update(label="Agent run failed", state="error")
+        settle(store, reservation, 0.0)
         st.error(f"The agent run could not complete: {exc}")
         return
+
+    settle(store, reservation, run.cost_usd)
 
     status.update(label=f"Agent finished ({run.status})", state="complete")
 
@@ -688,7 +716,14 @@ def render_agent_section(
 
 
 def main() -> None:
+    require_access(ROLE_UPLOAD)
+
     st.title("Ingest a report")
+    st.warning(
+        "Public reports only. Do not upload internal, confidential or client documents. "
+        "Uploaded files are processed in memory and discarded — only the extracted results are "
+        "stored."
+    )
     st.caption(
         f"Limits: {settings.max_file_mb} MB per file, {settings.max_pages} pages per PDF. "
         "Indicators come from regular expressions; entities and relationships come from Claude, "

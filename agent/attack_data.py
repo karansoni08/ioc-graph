@@ -55,6 +55,24 @@ def _clean_description(text: str) -> str:
     return text[:DESCRIPTION_CHARS]
 
 
+def ensure_available() -> bool:
+    """Download the ATT&CK bundle if it is missing. Returns True if it is usable afterwards.
+
+    Called on first start in the deployed app, where the container disk is wiped on every
+    restart, so the ~38 MB bundle cannot simply be left on disk between deploys. Caching this
+    with `st.cache_resource` at the call site means it runs once per container, not per rerun.
+    """
+    if BUNDLE_PATH.exists():
+        return True
+    try:
+        from scripts.fetch_attack import fetch
+
+        return fetch(force=False) == 0
+    except Exception:
+        # Agent mode degrades to unavailable rather than taking the app down with it.
+        return False
+
+
 def attack_version() -> str:
     if VERSION_PATH.exists():
         return VERSION_PATH.read_text(encoding="utf-8").strip()

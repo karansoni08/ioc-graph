@@ -28,16 +28,46 @@ class ConfigError(RuntimeError):
     """Raised when configuration is missing or unusable."""
 
 
+def _from_streamlit_secrets(name: str) -> str | None:
+    """Read from `st.secrets`, or None.
+
+    Wrapped in a broad try: outside a Streamlit run, and when no secrets file exists, Streamlit
+    raises rather than returning empty, and configuration lookup must never be what crashes the
+    app. Imported lazily so non-Streamlit entry points (scripts, pytest) do not load Streamlit.
+    """
+    try:
+        import streamlit as st
+
+        value = st.secrets.get(name)  # type: ignore[union-attr]
+    except Exception:
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _lookup(name: str) -> str | None:
     """Return a configuration value, or None if it is not set anywhere.
 
-    Phase 7: try `st.secrets` here as a fallback after the environment.
+    Environment first, then `st.secrets`. Environment-first means a local `.env` still wins
+    during development even if a secrets file is present, and it keeps the precedence rule
+    simple enough to reason about when debugging a deployment.
     """
     value = os.environ.get(name)
-    if value is None:
-        return None
-    value = value.strip()
-    return value or None
+    if value is not None and value.strip():
+        return value.strip()
+    return _from_streamlit_secrets(name)
+
+
+def _lookup_float(name: str, default: float) -> float:
+    raw = _lookup(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number.") from exc
 
 
 def _lookup_int(name: str, default: int) -> int:
@@ -73,6 +103,11 @@ class Settings:
     agent_max_tool_calls: int = 8
     agent_max_input_tokens: int = 60_000
     agent_max_seconds: int = 120
+    # Phase 7 deployment settings. Daily caps bound what a shared link can spend.
+    daily_report_limit: int = 20
+    daily_agent_limit: int = 5
+    daily_spend_limit_usd: float = 2.00
+    app_timezone: str = "America/Toronto"
 
     @property
     def max_file_bytes(self) -> int:
@@ -97,6 +132,10 @@ def get_settings() -> Settings:
         agent_max_tool_calls=_lookup_int("AGENT_MAX_TOOL_CALLS", 8),
         agent_max_input_tokens=_lookup_int("AGENT_MAX_INPUT_TOKENS", 60_000),
         agent_max_seconds=_lookup_int("AGENT_MAX_SECONDS", 120),
+        daily_report_limit=_lookup_int("DAILY_REPORT_LIMIT", 20),
+        daily_agent_limit=_lookup_int("DAILY_AGENT_LIMIT", 5),
+        daily_spend_limit_usd=_lookup_float("DAILY_SPEND_LIMIT_USD", 2.00),
+        app_timezone=_lookup("APP_TIMEZONE") or "America/Toronto",
     )
 
 
@@ -113,6 +152,58 @@ def get_api_key() -> str:
             "The key is read from .env only and is never written anywhere else."
         )
     return key
+
+
+SUPABASE_URL_VAR = "SUPABASE_URL"
+SUPABASE_KEY_VAR = "SUPABASE_SERVICE_KEY"
+VIEW_PASSWORD_VAR = "VIEW_PASSWORD"
+UPLOAD_PASSWORD_VAR = "UPLOAD_PASSWORD"
+
+# Every secret is read on demand through a function, never stored on Settings. Settings is
+# logged, displayed and repr'd in several places; a secret field would eventually leak through
+# one of them.
+SECRET_VARS = (
+    API_KEY_VAR,
+    SUPABASE_KEY_VAR,
+    VIEW_PASSWORD_VAR,
+    UPLOAD_PASSWORD_VAR,
+)
+
+
+def get_supabase_url() -> str:
+    value = _lookup(SUPABASE_URL_VAR)
+    if not value:
+        raise ConfigError(
+            f"{SUPABASE_URL_VAR} is not set. Required when STORAGE_BACKEND=supabase."
+        )
+    return value
+
+
+def get_supabase_service_key() -> str:
+    """The service-role key. Server-side only: it must never reach the browser."""
+    value = _lookup(SUPABASE_KEY_VAR)
+    if not value:
+        raise ConfigError(
+            f"{SUPABASE_KEY_VAR} is not set. Required when STORAGE_BACKEND=supabase."
+        )
+    return value
+
+
+def get_view_password() -> str | None:
+    return _lookup(VIEW_PASSWORD_VAR)
+
+
+def get_upload_password() -> str | None:
+    return _lookup(UPLOAD_PASSWORD_VAR)
+
+
+def access_control_configured() -> bool:
+    """True if at least one password is set.
+
+    When neither is set the app runs open, which is correct for local development and must never
+    be the case in a deployment. The UI says so loudly.
+    """
+    return bool(get_view_password() or get_upload_password())
 
 
 def has_api_key() -> bool:
