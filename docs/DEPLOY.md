@@ -56,6 +56,15 @@ MAX_CHUNKS_PER_REPORT = 6
 > with. The upload password is what protects your API credits. Generate both with a password
 > manager, 20+ characters, and never reuse them.
 
+### Or: Hugging Face Spaces
+
+An alternative host, allowed by `CLAUDE.md`. Spaces are their own git repo, so the code is pushed
+there rather than linked from GitHub, which means someone holding a scoped write token can run the
+deploy for you. Steps: [deploy/huggingface/HOWTO.md](../deploy/huggingface/HOWTO.md).
+
+**Make the Space private.** It holds a live API key, and the password gate is the only thing in
+front of your credits.
+
 ### Adding persistence afterwards
 
 When you want reports to survive restarts, do Part 1 below, then change one secret:
