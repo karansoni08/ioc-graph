@@ -682,3 +682,86 @@ class TestSearchRelevance:
         for page, snippet in index.search("mimikatz credential theft", 3):
             lowered = snippet.lower()
             assert any(token in lowered for token in ("mimikatz", "credential", "theft"))
+
+
+class TestSubmissionRobustness:
+    """Regressions from a real run that lost a complete set of findings."""
+
+    def test_stringified_list_is_accepted(self, doc, iocs, pipeline, snapshot) -> None:
+        """The model sent `entities` as a JSON string; the content was fine, the encoding was not."""
+        import json as _json
+
+        stringified = FakeToolUse(
+            name="submit_findings",
+            id="s1",
+            input={
+                "entities": _json.dumps([GOOD_ENTITY]),
+                "relationships": "[]",
+                "attack_patterns": "[]",
+            },
+        )
+        run = run_agent(
+            doc, iocs, pipeline, snapshot, FakeClient([FakeResponse(content=[stringified])]), SETTINGS
+        )
+        assert run.status == STATUS_SUBMITTED
+        assert {entity.name for entity in run.analysis.entities} == {"Akira"}
+
+    def test_rejected_submission_gets_a_retry_even_with_no_budget_left(
+        self, doc, iocs, pipeline, snapshot
+    ) -> None:
+        """Submitting costs no tool call, so a formatting slip must not end the run."""
+        bad = FakeToolUse(name="submit_findings", id="s1", input={"entities": 12345})
+        script = [
+            FakeResponse(content=[FakeToolUse("search_report", {"query": "akira"}, id="t1")]),
+            FakeResponse(content=[bad]),
+            FakeResponse(content=[submit_block([GOOD_ENTITY], tool_id="s2")]),
+        ]
+        settings = Settings(agent_max_tool_calls=1, agent_max_input_tokens=10**9, agent_max_seconds=120)
+        run = run_agent(doc, iocs, pipeline, snapshot, FakeClient(script), settings)
+        assert run.status == STATUS_SUBMITTED
+        assert run.analysis.entities
+
+    def test_retry_allowance_does_not_extend_a_non_submitting_loop(
+        self, doc, iocs, pipeline, snapshot
+    ) -> None:
+        """Guards the fix above: an UNUSED allowance must not keep the loop alive past a budget."""
+        script = [
+            FakeResponse(
+                content=[FakeToolUse("search_report", {"query": f"q{n}"}, id=f"t{n}")],
+                usage=FakeUsage(input_tokens=5000, output_tokens=100),
+            )
+            for n in range(40)
+        ]
+        settings = Settings(
+            agent_max_tool_calls=100, agent_max_input_tokens=12_000, agent_max_seconds=120
+        )
+        run = run_agent(doc, iocs, pipeline, snapshot, FakeClient(script), settings)
+        assert run.status == STATUS_NO_SUBMISSION
+        assert run.tool_calls < 10, run.tool_calls
+
+    def test_executed_tool_calls_never_exceed_the_budget(self, doc, iocs, pipeline, snapshot) -> None:
+        """One model turn can carry several tool_use blocks, so counting must be per execution."""
+        parallel = FakeResponse(
+            content=[
+                FakeToolUse("search_report", {"query": f"query number {n}"}, id=f"p{n}")
+                for n in range(5)
+            ]
+        )
+        settings = Settings(agent_max_tool_calls=3, agent_max_input_tokens=10**9, agent_max_seconds=120)
+        run = run_agent(
+            doc, iocs, pipeline, snapshot, FakeClient([parallel, parallel, parallel]), settings
+        )
+        assert run.tool_calls <= 3, run.tool_calls
+
+    def test_refused_calls_are_still_traced(self, doc, iocs, pipeline, snapshot) -> None:
+        """A refused call must appear in the trace, so the budget stop is visible."""
+        parallel = FakeResponse(
+            content=[
+                FakeToolUse("search_report", {"query": f"query number {n}"}, id=f"p{n}")
+                for n in range(4)
+            ]
+        )
+        settings = Settings(agent_max_tool_calls=2, agent_max_input_tokens=10**9, agent_max_seconds=120)
+        run = run_agent(doc, iocs, pipeline, snapshot, FakeClient([parallel]), settings)
+        assert len(run.steps) == 4
+        assert any("budget is exhausted" in step.result_preview for step in run.steps)

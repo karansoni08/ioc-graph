@@ -1,0 +1,7 @@
+fixture,mode,status,entities,relationships,proposed,dropped,grounded_rate,attack_truth,attack_found,attack_tp,attack_fp,attack_fn,attack_precision,attack_recall,tokens,cost_usd,seconds,tool_calls
+aa24-109a-akira,pipeline,cached,16,14,39,9,0.846,53,0,0,0,53,0.0,0.0,14550,0.0,256.1,0
+aa24-109a-akira,agent,submitted,27,0,33,6,0.818,53,0,0,0,53,0.0,0.0,40547,0.058979,39.1,8
+aa23-158a-cl0p-moveit,pipeline,cached,13,16,86,58,0.349,17,0,0,0,17,0.0,0.0,18674,0.0,248.6,0
+aa23-158a-cl0p-moveit,agent,submitted,24,22,33,10,0.727,17,11,11,0,6,1.0,0.647,35454,0.052254,34.5,7
+aa24-242a-ransomhub,pipeline,cached,31,30,117,36,0.701,22,0,0,0,22,0.0,0.0,25737,0.0,133.0,0
+aa24-242a-ransomhub,agent,no_submission,31,30,0,0,0.0,22,0,0,0,22,0.0,0.0,97824,0.163984,137.3,7

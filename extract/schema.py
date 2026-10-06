@@ -133,6 +133,35 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return resolve(schema)
 
 
+# Keywords the structured-outputs endpoint rejects on arrays. Verified against the live API on
+# 2026-10-06: sending either returns 400 "For 'array' type, property 'X' is not supported".
+# `minItems`, and all the string keywords (maxLength, minLength, pattern, format), are accepted.
+UNSUPPORTED_ARRAY_KEYWORDS = ("maxItems", "uniqueItems")
+
+
+def _strip_unsupported(node: Any) -> Any:
+    """Remove schema keywords the API rejects, folding any cap into the description instead.
+
+    Dropping `maxItems` does not weaken anything: the caps are enforced independently by
+    `extract/validate.py`, which truncates over-long lists with a `limit` reason. Moving the
+    number into the description keeps the model informed, which is the only thing the schema
+    keyword was buying.
+    """
+    if isinstance(node, dict):
+        node = {key: _strip_unsupported(value) for key, value in node.items()}
+        if node.get("type") == "array":
+            cap = node.pop("maxItems", None)
+            node.pop("uniqueItems", None)
+            if cap is not None:
+                existing = node.get("description", "")
+                note = f"At most {cap} items."
+                node["description"] = f"{existing} {note}".strip() if existing else note
+        return node
+    if isinstance(node, list):
+        return [_strip_unsupported(item) for item in node]
+    return node
+
+
 def _make_strict(node: Any) -> Any:
     """Require every property and forbid extras, recursively.
 
@@ -159,6 +188,7 @@ def extraction_json_schema() -> dict[str, Any]:
     """
     schema = ExtractionResult.model_json_schema()
     schema = _inline_refs(schema)
+    schema = _strip_unsupported(schema)
     schema = _make_strict(schema)
     schema.pop("title", None)
     return schema

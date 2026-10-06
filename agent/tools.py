@@ -12,12 +12,13 @@ model controls directly.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
 
 import networkx as nx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from extract.display import defang
 from graph.model import REPORTED_IN
@@ -71,6 +72,27 @@ class SubmitFindingsArgs(BaseModel):
     entities: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
     relationships: list[dict[str, Any]] = Field(default_factory=list, max_length=60)
     attack_patterns: list[AttackMapping] = Field(default_factory=list, max_length=30)
+
+    @field_validator("entities", "relationships", "attack_patterns", mode="before")
+    @classmethod
+    def _accept_json_string(cls, value: Any) -> Any:
+        """Accept a JSON-encoded string where a list is expected.
+
+        Observed in a real run: the model sent `entities` as a stringified JSON array, which
+        failed validation and — because the tool budget was already spent — cost the entire run.
+        The content was fine; only the encoding was wrong. Parsing it is strictly better than
+        discarding a complete set of findings over a formatting slip, and the parsed value still
+        faces every downstream check unchanged.
+        """
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+            return parsed
+        if value is None:
+            return []
+        return value
 
 
 # --------------------------------------------------------------- tool schemas

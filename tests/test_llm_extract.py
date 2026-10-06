@@ -617,3 +617,52 @@ class TestOrchestration:
             doc, iocs, provider, settings=tmp_settings, model="claude-haiku-4-5", use_cache=False
         )
         assert "tools" not in provider.calls[0]
+
+
+class TestSchemaApiCompatibility:
+    """Regression tests for keywords the structured-outputs endpoint rejects.
+
+    Found only by a live call: the API returns 400 "For 'array' type, property 'maxItems' is not
+    supported". Pydantic emits maxItems from `max_length` on a list, so every schema this project
+    generated was rejected until it was stripped.
+    """
+
+    def test_no_max_items_anywhere(self) -> None:
+        assert "maxItems" not in json.dumps(extraction_json_schema())
+
+    def test_no_unique_items_anywhere(self) -> None:
+        assert "uniqueItems" not in json.dumps(extraction_json_schema())
+
+    def test_the_cap_is_still_communicated_in_the_description(self) -> None:
+        """Dropping maxItems must not mean the model is left unaware of the limit."""
+        schema = extraction_json_schema()
+        entities = schema["properties"]["entities"]
+        assert "40" in entities.get("description", ""), entities
+
+    def test_supported_string_keywords_are_kept(self) -> None:
+        """maxLength/minLength ARE supported, so stripping must not be over-broad."""
+        schema = extraction_json_schema()
+        entity = schema["properties"]["entities"]["items"]
+        assert entity["properties"]["name"]["maxLength"] == 100
+        assert entity["properties"]["evidence"]["minLength"] == 10
+
+    def test_enums_survive(self) -> None:
+        schema = extraction_json_schema()
+        entity = schema["properties"]["entities"]["items"]
+        assert "threat-actor" in entity["properties"]["type"]["enum"]
+
+    def test_caps_are_still_enforced_by_the_validator(self, iocs) -> None:
+        """The schema no longer states the cap, so the validator must be what enforces it."""
+        from extract.schema import MAX_ENTITIES
+
+        entity = {
+            "name": "APT21",
+            "type": "threat-actor",
+            "aliases": [],
+            "description": "",
+            "evidence": "APT21 deployed the Akira ransomware against healthcare targets",
+        }
+        # Distinct names so deduplication does not collapse them before the cap is reached.
+        many = [dict(entity, name=f"APT21 variant {n}") for n in range(MAX_ENTITIES + 10)]
+        result, report = validate({"entities": many, "relationships": []}, REPORT_TEXT, iocs)
+        assert len(result.entities) <= MAX_ENTITIES

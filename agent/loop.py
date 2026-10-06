@@ -73,8 +73,12 @@ copied from the report.
 - For indicators, only use values from the candidate indicator list. Never invent one.
 - Only submit ATT&CK technique ids that lookup_attack returned to you.
 - You have a budget of at most {max_tool_calls} tool calls. Use them deliberately.
+- submit_findings does NOT count against that budget, so you can always afford to submit. Do not \
+spend every call on exploration.
 - You MUST finish by calling submit_findings exactly once. That is the only way to record your \
-work. If your budget runs out, call it immediately with whatever you have."""
+work. If your budget runs out, call it immediately with whatever you have.
+- In submit_findings, entities, relationships and attack_patterns must each be a JSON ARRAY, not \
+a string containing JSON."""
 
 
 @dataclass
@@ -341,6 +345,14 @@ def run_agent(
     started = time.monotonic()
     final_warning_sent = False
     submitted: SubmitFindingsArgs | None = None
+    # A rejected submission gets one more chance even when the tool budget is spent. Submitting
+    # costs no tool call, and a real run lost a complete set of findings to a JSON encoding slip
+    # with nothing left to retry with.
+    submission_retries_left = 1
+    # Set only when a submission was attempted and REJECTED. Without this the loop would run past
+    # every budget whenever the model simply never submits, because an unused retry allowance
+    # would keep extending it.
+    pending_resubmission = False
 
     while True:
         elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -350,11 +362,14 @@ def run_agent(
             or elapsed_ms >= settings.agent_max_seconds * 1000
         )
 
-        if budget_spent and final_warning_sent:
-            # One warning was already sent and the model still did not submit.
+        if budget_spent and final_warning_sent and not pending_resubmission:
+            # Warned, and no rejected submission is owed another attempt.
             run.status = STATUS_NO_SUBMISSION
             run.stop_note = "Budget exhausted and the model did not call submit_findings."
             break
+
+        # The allowance grants exactly one extra turn, consumed here.
+        pending_resubmission = False
 
         if budget_spent and not final_warning_sent:
             messages.append(
@@ -418,7 +433,11 @@ def run_agent(
                     run.status = STATUS_SUBMITTED
                     should_break = True
                 except Exception as exc:  # noqa: BLE001
-                    # An invalid submission is recoverable: tell the model and let it retry.
+                    # An invalid submission is recoverable: tell the model and let it retry, even
+                    # if the tool budget is spent, because submitting costs no tool call.
+                    if submission_retries_left > 0:
+                        submission_retries_left -= 1
+                        pending_resubmission = True
                     run.steps.append(
                         AgentStep(
                             index=len(run.steps),
@@ -438,18 +457,22 @@ def run_agent(
                     )
                 continue
 
-            run.tool_calls += 1
-
-            if run.tool_calls > settings.agent_max_tool_calls:
+            # The budget is checked BEFORE incrementing, and a refused call is not counted, so
+            # `tool_calls` is the number of tools that actually ran. One model turn can contain
+            # several tool_use blocks, so without this the reported count could exceed the cap.
+            if run.tool_calls >= settings.agent_max_tool_calls:
                 result_text = budget_exhausted_error()
                 is_error = True
             elif tool_name == TOOL_SEARCH_REPORT:
+                run.tool_calls += 1
                 result_text = run_search_report(raw_args, index)
                 is_error = result_text.startswith("Error:")
             elif tool_name == TOOL_LOOKUP_ATTACK:
+                run.tool_calls += 1
                 result_text = run_lookup_attack(raw_args)
                 is_error = result_text.startswith("Error:")
             elif tool_name == TOOL_QUERY_GRAPH:
+                run.tool_calls += 1
                 result_text = run_query_graph(raw_args, graph_snapshot)
                 is_error = result_text.startswith("Error:")
             else:

@@ -8,8 +8,12 @@ primaryColor = "#3d8bcd"
 # Matches MAX_FILE_MB in config.py. Streamlit rejects larger uploads before our own check runs,
 # so these two numbers must agree or the app's error message would never be reached.
 maxUploadSize = 5
+# Both left at their secure defaults. An earlier version of this file set
+# enableCORS = false, which Streamlit warns about: with CORS disabled it sends
+# `Access-Control-Allow-Origin: *` and accepts a WebSocket connection from any origin, and XSRF
+# protection does not cover WebSocket upgrades. There is no reason to relax either here.
 enableXsrfProtection = true
-enableCORS = false
+enableCORS = true
 
 [browser]
 gatherUsageStats = false

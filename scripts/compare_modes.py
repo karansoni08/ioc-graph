@@ -64,12 +64,16 @@ class ModeResult:
     status: str = ""
     from_cache: bool = False
 
+    # Items the VALIDATOR kept, excluding entities synthesized from ATT&CK mappings. Those are
+    # created by application code after validation, so counting them made the rate exceed 1.0.
+    validated_kept: int = 0
+
     @property
     def grounded_rate(self) -> float:
-        """Kept / proposed: how much of what the model said survived validation."""
+        """Validator-kept / proposed: how much of what the model said survived validation."""
         if self.proposed == 0:
             return 0.0
-        return (self.entities_kept + self.relationships_kept) / self.proposed
+        return self.validated_kept / self.proposed
 
 
 def _attack_metrics(found: list[str], truth: list[str]) -> tuple[int, int, int, float, float]:
@@ -166,6 +170,7 @@ def run_comparison(settings: Settings) -> list[dict]:
             proposed=pipeline_analysis.validation.proposed_total,
             dropped=pipeline_analysis.validation.dropped_count,
             attack_found=_pipeline_attack_ids(pipeline_analysis),
+            validated_kept=pipeline_analysis.validation.kept_total,
             tokens=pipeline_analysis.total_tokens,
             cost_usd=pipeline_analysis.cost_usd,
             duration_ms=pipeline_analysis.duration_ms,
@@ -187,6 +192,7 @@ def run_comparison(settings: Settings) -> list[dict]:
             proposed=run.validation.proposed_total,
             dropped=run.validation.dropped_count,
             attack_found=[pattern["technique_id"] for pattern in run.attack_patterns],
+            validated_kept=run.validation.kept_total,
             tokens=run.input_tokens + run.output_tokens,
             cost_usd=run.cost_usd,
             duration_ms=run.duration_ms,
