@@ -64,8 +64,9 @@ graph is the intersection of what the document says and what the model can prove
   control to prove the guardrails do not over-block.
 - **Bounded agent mode** with four read-only tools, MITRE ATT&CK mapping against a local dataset,
   hard budgets, and a full step-by-step trace of every run.
-- **Shared deployment** with view/upload passwords, atomic daily caps on reports, agent runs and
-  spend, and optimistic concurrency so two simultaneous uploads do not overwrite each other.
+- **Shared deployment** with view/upload passwords, daily caps on reports, agent runs and spend
+  enforced race-free on both storage backends, and optimistic concurrency so two simultaneous
+  uploads do not overwrite each other.
 
 ## Accuracy
 

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ class LocalGraphStore(GraphStore):
         self.backup_dir = self.data_dir / "backups"
         self.cache_dir = self.data_dir / "cache"
         self.runs_dir = self.data_dir / "runs"
+        self.usage_path = self.data_dir / "usage.json"
 
     # ------------------------------------------------------------------ graph
 
@@ -151,6 +153,78 @@ class LocalGraphStore(GraphStore):
     def cache_set(self, key: str, value: dict[str, Any]) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._atomic_write(self.cache_dir / f"{key}.json", json.dumps(value, indent=2))
+
+
+    # ------------------------------------------------------------------ usage
+
+    # Streamlit serves every session of one deployment from a single process, so a process-level
+    # lock plus an atomic file write is enough to make the daily caps race-free here. Supabase does
+    # this in SQL because there the writers are separate connections; the guarantee needed is the
+    # same, which is why this backend implements the identical interface rather than leaving the
+    # caps unenforced. Without it, a deployment on this backend would have no spend ceiling at all.
+    _usage_lock = threading.Lock()
+
+    def _read_usage(self) -> dict[str, dict]:
+        if not self.usage_path.exists():
+            return {}
+        try:
+            data = json.loads(self.usage_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_usage(self, data: dict[str, dict]) -> None:
+        self._atomic_write(self.usage_path, json.dumps(data, indent=2))
+
+    def _row(self, data: dict[str, dict], day: str) -> dict:
+        return data.setdefault(
+            day, {"day": day, "reports": 0, "agent_runs": 0, "spend_usd": 0.0}
+        )
+
+    def reserve_usage(
+        self,
+        day: str,
+        kind: str,
+        estimated_cost: float,
+        report_limit: int,
+        agent_limit: int,
+        spend_limit: float,
+    ) -> bool:
+        """Check every daily cap and reserve the usage, atomically. False means blocked."""
+        with self._usage_lock:
+            data = self._read_usage()
+            row = self._row(data, day)
+
+            if kind == "report" and row["reports"] + 1 > report_limit:
+                return False
+            if kind == "agent" and row["agent_runs"] + 1 > agent_limit:
+                return False
+            if row["spend_usd"] + estimated_cost > spend_limit:
+                return False
+
+            if kind == "report":
+                row["reports"] += 1
+            if kind == "agent":
+                row["agent_runs"] += 1
+            row["spend_usd"] = round(row["spend_usd"] + estimated_cost, 6)
+
+            # Keep only the recent days; this file should never grow without bound.
+            for stale in sorted(data)[:-30]:
+                del data[stale]
+
+            self._write_usage(data)
+            return True
+
+    def settle_usage(self, day: str, delta: float) -> None:
+        """Adjust the reserved estimate to the actual spend, never below zero."""
+        with self._usage_lock:
+            data = self._read_usage()
+            row = self._row(data, day)
+            row["spend_usd"] = round(max(0.0, row["spend_usd"] + delta), 6)
+            self._write_usage(data)
+
+    def get_usage(self, day: str) -> dict[str, Any]:
+        return dict(self._row(self._read_usage(), day))
 
     # ------------------------------------------------------------------- runs
 

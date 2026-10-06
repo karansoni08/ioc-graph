@@ -173,12 +173,41 @@ class TestVersionConflictRetry:
 
 
 class TestUsageCaps:
-    def test_local_backend_has_no_caps_and_says_so(self, tmp_path) -> None:
+    def test_local_backend_enforces_caps_too(self, tmp_path) -> None:
+        """The local backend used to leave caps unenforced.
+
+        That meant a deployment on it had no spend ceiling at all, which is the one control that
+        actually protects the owner's API credits on a shared link. It now implements the same
+        interface as Supabase.
+        """
         store = LocalGraphStore(tmp_path)
-        settings = Settings()
-        reservation = reserve(store, settings, KIND_REPORT, 0.10)
-        assert reservation.allowed is True
-        assert reservation.enforced is False
+        settings = Settings(daily_report_limit=1, daily_spend_limit_usd=100.0)
+
+        first = reserve(store, settings, KIND_REPORT, 0.01)
+        assert first.allowed is True
+        assert first.enforced is True
+
+        second = reserve(store, settings, KIND_REPORT, 0.01)
+        assert second.allowed is False, "the local backend did not enforce the report cap"
+
+    def test_local_spend_cap_is_enforced(self, tmp_path) -> None:
+        store = LocalGraphStore(tmp_path)
+        settings = Settings(daily_report_limit=99, daily_spend_limit_usd=0.50)
+        assert reserve(store, settings, KIND_REPORT, 0.40).allowed is True
+        assert reserve(store, settings, KIND_REPORT, 0.40).allowed is False
+
+    def test_local_usage_survives_a_new_store_instance(self, tmp_path) -> None:
+        """Counts must persist to disk: Streamlit rebuilds objects on every rerun."""
+        settings = Settings(daily_report_limit=1, daily_spend_limit_usd=100.0)
+        assert reserve(LocalGraphStore(tmp_path), settings, KIND_REPORT, 0.01).allowed is True
+        assert reserve(LocalGraphStore(tmp_path), settings, KIND_REPORT, 0.01).allowed is False
+
+    def test_local_caps_are_per_day(self, tmp_path) -> None:
+        store = LocalGraphStore(tmp_path)
+        assert store.reserve_usage("2026-10-06", "report", 0.01, 1, 5, 100.0) is True
+        assert store.reserve_usage("2026-10-06", "report", 0.01, 1, 5, 100.0) is False
+        # A new day starts fresh.
+        assert store.reserve_usage("2026-10-07", "report", 0.01, 1, 5, 100.0) is True
 
     def test_report_limit_blocks_the_next_upload(self, tmp_path) -> None:
         store = FakeUsageStore(tmp_path)
@@ -239,14 +268,34 @@ class TestUsageCaps:
         assert reservation.allowed is False
         assert "could not be checked" in reservation.reason
 
-    def test_settle_is_a_noop_for_an_unenforced_reservation(self, tmp_path) -> None:
-        store = FakeUsageStore(tmp_path)
-        reservation = reserve(LocalGraphStore(tmp_path), Settings(), KIND_REPORT, 0.10)
-        settle(store, reservation, 0.05)
-        assert store.settle_calls == 0
+    def test_settle_is_a_noop_for_a_store_without_usage_support(self, tmp_path) -> None:
+        """A backend that does not implement the usage interface must not be called."""
 
-    def test_usage_summary_is_none_on_local(self, tmp_path) -> None:
-        assert usage_summary(LocalGraphStore(tmp_path), Settings()) is None
+        class NoUsageStore:
+            name = "none"
+
+        reservation = reserve(NoUsageStore(), Settings(), KIND_REPORT, 0.10)
+        assert reservation.enforced is False
+        # Must not raise, and must not attempt to settle.
+        settle(NoUsageStore(), reservation, 0.05)
+
+    def test_local_settle_adjusts_to_actual_spend(self, tmp_path) -> None:
+        store = LocalGraphStore(tmp_path)
+        settings = Settings(daily_spend_limit_usd=10.0)
+        reservation = reserve(store, settings, KIND_REPORT, 0.50)
+        settle(store, reservation, 0.03)
+        assert store.get_usage(today_key(settings))["spend_usd"] == pytest.approx(0.03)
+
+    def test_usage_summary_is_available_on_local(self, tmp_path) -> None:
+        summary = usage_summary(LocalGraphStore(tmp_path), Settings())
+        assert summary is not None
+        assert summary["reports"] == 0
+
+    def test_usage_summary_is_none_without_usage_support(self) -> None:
+        class NoUsageStore:
+            name = "none"
+
+        assert usage_summary(NoUsageStore(), Settings()) is None
 
     def test_today_key_uses_the_configured_timezone(self) -> None:
         key = today_key(Settings(app_timezone="America/Toronto"))

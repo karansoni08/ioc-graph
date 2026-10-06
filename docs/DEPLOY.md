@@ -1,5 +1,70 @@
 # Deployment
 
+## Fastest path to a live link (about 3 minutes, no Supabase)
+
+**You do not need Supabase to get a working public link.** The app runs on the `local` storage
+backend anywhere, including Streamlit Community Cloud. The only thing you give up is persistence:
+Streamlit wipes the container disk on restart and redeploy, so ingested reports disappear when the
+app sleeps or is rebooted. For showing the project to someone, that is usually fine — and you can
+add Supabase later without changing any code, just one secret.
+
+Everything else in this document is the durable setup. Start here if you want the link now.
+
+1. Go to **<https://share.streamlit.io>** and sign in **with GitHub** (the account that owns this
+   repo). Authorize access to private repositories when prompted.
+2. Click **Create app** → **Deploy a public app from a template**? No — choose **Deploy now** /
+   "I have an app", then select:
+   - Repository: `karansoni08/ioc-graph`
+   - Branch: `main`
+   - Main file path: `app.py`
+   - Python version: **3.11** or newer
+3. Open **Advanced settings** → **Secrets**, and paste the block below, replacing the two
+   placeholder values with your real ones.
+4. Click **Deploy**. First boot takes a few minutes while it installs dependencies.
+
+```toml
+ANTHROPIC_API_KEY = "sk-ant-api03-PASTE-YOUR-REAL-KEY-HERE"
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_AGENT_MODEL = "claude-haiku-4-5-20251001"
+
+# No Supabase needed for this path. Data does NOT survive an app restart.
+STORAGE_BACKEND = "local"
+
+# Change BOTH of these. See the warning below.
+VIEW_PASSWORD = "PASTE-A-LONG-RANDOM-PASSPHRASE"
+UPLOAD_PASSWORD = "PASTE-A-DIFFERENT-LONG-RANDOM-PASSPHRASE"
+
+DAILY_REPORT_LIMIT = 20
+DAILY_AGENT_LIMIT = 5
+DAILY_SPEND_LIMIT_USD = 2.00
+APP_TIMEZONE = "America/Toronto"
+
+MAX_FILE_MB = 5
+MAX_PAGES = 50
+MAX_CHUNKS_PER_REPORT = 6
+```
+
+> **The daily caps work on this path too.** They are enforced on both backends — in SQL under a row
+> lock on Supabase, and under a process lock with an atomic file write on the local backend, which
+> is sufficient because Streamlit serves every session of one deployment from a single process. The
+> counts live in `data/usage.json`, so they reset whenever the container is wiped. Combined with the
+> per-report chunk cap, the file size and page limits, the result cache, and the fact that nothing
+> calls the API without a click, that bounds what a shared link can cost you.
+
+> **Choose strong passwords.** Anything short, dictionary-based, or thematically related to the
+> project ("regex", "llm", "ioc", "graph") is guessable by exactly the audience you are sharing this
+> with. The upload password is what protects your API credits. Generate both with a password
+> manager, 20+ characters, and never reuse them.
+
+### Adding persistence afterwards
+
+When you want reports to survive restarts, do Part 1 below, then change one secret:
+`STORAGE_BACKEND = "supabase"` plus `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`. No code changes.
+
+---
+
+## The durable setup
+
 One shared workspace on Streamlit Community Cloud, with Supabase for storage and two shared
 passwords. Deployed from the private GitHub repo.
 
