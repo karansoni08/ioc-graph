@@ -11,3 +11,4 @@ ioc-finder==9.4.1
 iocextract==1.16.1
 ioc-fanger==5.1.1
 requests==2.34.2
+anthropic==1.11.0

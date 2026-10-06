@@ -12,17 +12,18 @@ every claim it makes is checked against the source text before it reaches the gr
 
 ## Status
 
-**Phase 2 of 7 — deterministic IOC extraction.** The app accepts a PDF or HTML report, extracts
-the text and tables, and pulls out indicators of compromise with regular expressions: IPs,
-domains, URLs, hashes, emails and CVE IDs, refanged, deduplicated, and flagged where they look
-like false positives. No LLM is involved yet. The graph, storage and access control are the
-subject of later phases.
+**Phase 3 of 7 — LLM entity extraction with validation.** The app accepts a PDF or HTML report,
+extracts indicators with regular expressions, then asks Claude for the threat entities and the
+relationships between them. Every claim the model makes is checked against the source text
+before it is kept: quotes must be verbatim, names must appear in the report, and indicator
+values must already have been found by regex. Results are cached by file hash so re-analysing a
+report costs nothing. The graph, storage and access control are the subject of later phases.
 
 | Phase | Scope | State |
 | --- | --- | --- |
 | 1 | Repo setup, secret scanning, Streamlit skeleton, PDF/HTML ingestion | Done |
 | 2 | Regex IOC extraction, refanging, false-positive flags, evaluation | Done |
-| 3 | Claude extraction with schema, grounding validation, caching, cost tracking | Not started |
+| 3 | Claude extraction with schema, grounding validation, caching, cost tracking | Done |
 | 4 | Knowledge graph, normalization, dedup, versioned storage, explorer | Not started |
 | 5 | Layered guardrails, poisoned test corpus, threat model | Not started |
 | 6 | Bounded agent mode with ATT&CK mapping, run traces, evaluation | Not started |
@@ -38,8 +39,9 @@ subject of later phases.
 - **Tests:** pytest
 - **Secret scanning:** pre-commit with gitleaks
 - **IOC extraction:** `ioc-finder` (primary), `iocextract` (SHA-512 only)
-- **Planned:** the Anthropic Python SDK for entity extraction, NetworkX for the graph,
-  Supabase for deployed storage
+- **LLM:** the official `anthropic` SDK with native structured outputs, behind a provider
+  interface so another provider can be added
+- **Planned:** NetworkX for the graph, Supabase for deployed storage
 
 ## Local setup
 
@@ -73,6 +75,8 @@ All settings live in `.env`, which is never committed. See `.env.example` for th
 | `STORAGE_BACKEND` | `local` | `local` for JSON files in `data/`, `supabase` when deployed |
 | `MAX_FILE_MB` | `5` | Largest accepted upload |
 | `MAX_PAGES` | `50` | Largest accepted PDF |
+| `MAX_CHUNKS_PER_REPORT` | `6` | Chunks of one report sent to the model; the main cost control |
+| `MAX_OUTPUT_TOKENS` | `4000` | Output budget per chunk |
 
 ## Project layout
 
@@ -84,13 +88,19 @@ ingest/             PDF and HTML text extraction
   loader.py         Upload validation and dispatch
   pdf.py            PyMuPDF text, pdfplumber tables
   html.py           BeautifulSoup text extraction
-extract/            IOC extraction (Phase 2); entity extraction follows in Phase 3
+extract/            IOC extraction and LLM extraction
   models.py         The IOC and IOCExtraction models
-  iocs.py           Extraction, normalization, dedup, false-positive flags
+  iocs.py           Regex extraction, normalization, dedup, false-positive flags
   sections.py       IOC section detection
   text_repair.py    Rejoins hashes wrapped across lines by PDF layout
   display.py        Defanging for display
   allowlist.txt     Domains flagged as benign
+  schema.py         The schema the LLM must return (single source of truth)
+  chunking.py       Priority-ordered chunking with a per-report chunk cap
+  prompts.py        Nonce delimiters and the untrusted-data instructions
+  validate.py       Grounding, indicator and integrity checks on model output
+  llm_extract.py    Orchestration, merging, caching, cost tracking
+llm/                Provider interface, Anthropic provider, price table
 scripts/            fetch_fixtures.py, build_expected.py, eval_regex.py
 llm/                LLM provider interface (Phase 3)
 graph/              Knowledge graph (Phase 4)
@@ -155,6 +165,44 @@ python scripts/fetch_fixtures.py      # downloads the advisories (gitignored)
 python scripts/build_expected.py      # rebuilds the committed ground truth
 python scripts/eval_regex.py          # prints the metrics
 ```
+
+## How LLM extraction is validated
+
+The model is treated as an untrusted component that *proposes* claims. Application code decides
+which claims survive. Nothing it says reaches the graph unchecked.
+
+**Before the call.** Report text is wrapped in `<report-{nonce}>` tags where the nonce is eight
+random hex characters generated per request, so a document cannot close a delimiter it cannot
+predict. Any literal `<report` or `</report` in the text is neutralized first. The
+untrusted-data rule appears at the top of the system prompt and again immediately after the
+report block. In pipeline mode the model is given **no tools at all** — output format is
+constrained with native structured outputs (`output_config`), not a forced tool — so there is
+nothing to execute.
+
+**After the call**, in `extract/validate.py`, every item must pass:
+
+1. **Schema** — Pydantic. Entity and relationship types outside the STIX allowlists never get
+   further. A malformed response is retried exactly once with the error described, then dropped.
+2. **Text safety** — HTML tags and markdown link/image syntax are stripped from every string.
+3. **Grounding** — the `evidence` quote must appear verbatim in the chunk. Comparison normalizes
+   the things PDFs break (line breaks mid-sentence, curly quotes, en dashes, soft hyphens,
+   hyphenation across lines, case) but not wording, so a paraphrase still fails.
+4. **Indicator check** — an `indicator` entity must match a value regex extraction already
+   found. This is what enforces the rule that the model never invents an IOC.
+5. **Name presence** — the entity name or one of its aliases must appear in the text.
+6. **Relationship integrity** — both endpoints must resolve to a kept entity or a known
+   indicator. Dangling relationships are dropped.
+
+Every drop is recorded with a reason code (`schema`, `not_grounded`, `unknown_indicator`,
+`name_not_in_text`, `dangling`, `limit`) and shown in the app's validation panel, so the
+guardrails are visible rather than implied. If more than half a chunk's items are dropped, the
+report is flagged as suspicious.
+
+**Cost control.** No API call happens without a button click, and the worst-case cost is shown
+first. Only the highest-priority chunks are sent — IOC-section pages, then pages with indicators
+or ATT&CK technique ids — capped at `MAX_CHUNKS_PER_REPORT` (default 6), with the number skipped
+reported. Results are cached by file hash, model and prompt version, so re-analysing the same
+report makes no call and costs nothing.
 
 ## Security
 

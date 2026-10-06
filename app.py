@@ -20,13 +20,23 @@ import json
 import pandas as pd
 import streamlit as st
 
-from config import get_settings
+from config import get_settings, has_api_key
+from extract.chunking import chunk_document
 from extract.display import defang, format_pages
 from extract.iocs import extract_iocs
+from extract.llm_extract import (
+    ReportAnalysis,
+    estimate_max_cost,
+    load_cached,
+    run_llm_extraction,
+)
 from extract.models import IOC_TYPES, IOCExtraction
 from ingest.errors import IngestError
 from ingest.loader import load_document
 from ingest.models import Document
+from llm.base import LLMError
+from llm.factory import get_provider
+from llm.pricing import format_cost, is_known_model
 
 st.set_page_config(page_title="IOC Graph", layout="wide")
 
@@ -207,6 +217,180 @@ def render_iocs(document: Document, extraction: IOCExtraction) -> None:
     )
 
 
+def render_analysis(analysis: ReportAnalysis) -> None:
+    """Show LLM results. All model-derived text goes through st.dataframe or st.text."""
+    columns = st.columns(5)
+    columns[0].metric("Entities", len(analysis.entities))
+    columns[1].metric("Relationships", len(analysis.relationships))
+    columns[2].metric("Tokens", f"{analysis.total_tokens:,}")
+    columns[3].metric("Cost", "cached" if analysis.from_cache else format_cost(analysis.cost_usd))
+    columns[4].metric("Dropped", analysis.validation.dropped_count)
+
+    if analysis.from_cache:
+        st.success("Loaded from cache — no API call was made and this cost nothing.")
+    if analysis.chunks_skipped:
+        st.caption(
+            f"{analysis.chunks_processed} chunk(s) analysed, {analysis.chunks_skipped} skipped "
+            "to control cost. The highest-priority pages were analysed first."
+        )
+    if analysis.validation.suspicious:
+        st.warning(
+            "More than half of this report's proposed items were rejected. The text may be "
+            "adversarial, or the model behaved unusually. Review the validation panel."
+        )
+
+    if analysis.entities:
+        st.caption("Entities (model output, validated against the report)")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "type": entity.type,
+                        "name": entity.name,
+                        "aliases": ", ".join(entity.aliases),
+                        "description": " ".join(entity.descriptions)[:300],
+                        "quotes": len(entity.evidence),
+                    }
+                    for entity in analysis.entities
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No entities survived validation for this report.")
+
+    if analysis.relationships:
+        st.caption("Relationships")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "source": rel.source,
+                        "relation": rel.relation,
+                        "target": rel.target,
+                        "quotes": len(rel.evidence),
+                    }
+                    for rel in analysis.relationships
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with st.expander(f"Validation — {analysis.validation.dropped_count} item(s) dropped"):
+        st.caption(
+            "Every claim the model made had to quote the report verbatim, name something that "
+            "appears in the text, and use only indicators found by regex. Anything else was "
+            "dropped. This panel is the audit trail."
+        )
+        kept = analysis.validation.kept_total
+        proposed = analysis.validation.proposed_total
+        st.text(
+            f"proposed: {proposed}\n"
+            f"kept:     {kept}\n"
+            f"dropped:  {analysis.validation.dropped_count}"
+        )
+        counts = analysis.validation.counts_by_reason()
+        if counts:
+            st.caption("Dropped by reason")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"reason": reason, "count": count} for reason, count in counts.items()]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption("Dropped items")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "kind": item.kind,
+                            "reason": item.reason,
+                            "value": item.value,
+                            "detail": item.detail,
+                        }
+                        for item in analysis.validation.dropped
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.text("Nothing was dropped.")
+
+    with st.expander("Evidence quotes"):
+        for entity in analysis.entities:
+            st.caption(f"{entity.type}: {entity.name}")
+            for quote in entity.evidence:
+                # st.text: this is report-derived content echoed by the model.
+                st.text(quote)
+
+
+def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
+    st.subheader("Entity and relationship extraction")
+
+    settings = get_settings()
+    model = settings.anthropic_model
+
+    cached = load_cached(document.sha256, model)
+    if cached is not None:
+        st.caption("A cached analysis exists for this report and model.")
+        render_analysis(cached)
+        return
+
+    if not has_api_key():
+        st.warning(
+            "No ANTHROPIC_API_KEY is configured, so analysis is unavailable. "
+            "Copy .env.example to .env and add your key."
+        )
+        return
+
+    chunks, skipped = chunk_document(document, extraction, max_chunks=settings.max_chunks_per_report)
+    worst_case = estimate_max_cost(chunks, model, settings.max_output_tokens)
+
+    st.caption(
+        f"{len(chunks)} chunk(s) would be sent to {model}"
+        + (f", {skipped} skipped to control cost" if skipped else "")
+        + f". Estimated maximum cost: {format_cost(worst_case)} "
+        "(worst case: every chunk uses its full output budget)."
+    )
+    if not is_known_model(model):
+        st.warning(
+            f"'{model}' is not in the price table, so the estimate uses the most expensive "
+            "current rate. Check llm/pricing.py."
+        )
+
+    # No API call happens without this click.
+    if not st.button("Analyze with Claude", type="primary"):
+        st.caption("Analysis runs only when you click. Nothing has been sent yet.")
+        return
+
+    status = st.status("Analyzing…", expanded=True)
+
+    def progress(index: int, total: int, label: str) -> None:
+        status.update(label=f"Analyzing chunk {index + 1} of {total} ({label})…")
+
+    try:
+        analysis = run_llm_extraction(
+            document,
+            extraction,
+            get_provider("anthropic"),
+            settings=settings,
+            model=model,
+            max_tokens=settings.max_output_tokens,
+            progress=progress,
+        )
+    except LLMError as exc:
+        status.update(label="Analysis failed", state="error")
+        st.error(str(exc))
+        return
+
+    status.update(label="Analysis complete", state="complete")
+    render_analysis(analysis)
+
+
 def main() -> None:
     with st.sidebar:
         st.header("IOC Graph")
@@ -214,11 +398,14 @@ def main() -> None:
             "Upload a threat intelligence report. The app extracts indicators of compromise "
             "and threat entities and merges them into a knowledge graph you can explore."
         )
-        st.info("Phase 2: regex IOC extraction")
+        st.info("Phase 3: LLM entity extraction")
         st.caption(
             f"Limits: {settings.max_file_mb} MB per file, {settings.max_pages} pages per PDF."
         )
-        st.caption("Indicators are found with regular expressions only. No LLM is used yet.")
+        st.caption(
+            "Indicators come from regular expressions. Entities and relationships come "
+            "from Claude, and every claim is checked against the report before it is kept."
+        )
 
     st.title("Upload a report")
 
@@ -255,6 +442,9 @@ def main() -> None:
     st.divider()
     extraction = extract_indicators(document.sha256, document)
     render_iocs(document, extraction)
+
+    st.divider()
+    render_llm_section(document, extraction)
 
 
 main()

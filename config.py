@@ -61,6 +61,9 @@ class Settings:
     max_file_mb: int = 5
     max_pages: int = 50
     data_dir: str = "data"
+    # Phase 3: how many chunks of one report may be sent to the model. The main cost control.
+    max_chunks_per_report: int = 6
+    max_output_tokens: int = 4000
 
     @property
     def max_file_bytes(self) -> int:
@@ -78,6 +81,8 @@ def get_settings() -> Settings:
         max_file_mb=_lookup_int("MAX_FILE_MB", 5),
         max_pages=_lookup_int("MAX_PAGES", 50),
         data_dir=_lookup("DATA_DIR") or "data",
+        max_chunks_per_report=_lookup_int("MAX_CHUNKS_PER_REPORT", 6),
+        max_output_tokens=_lookup_int("MAX_OUTPUT_TOKENS", 4000),
     )
 
 
