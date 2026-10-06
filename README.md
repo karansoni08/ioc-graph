@@ -12,12 +12,12 @@ every claim it makes is checked against the source text before it reaches the gr
 
 ## Status
 
-**Phase 5 of 7 — layered guardrails.** The app ingests a PDF or HTML report, strips hidden
-content, screens for prompt injection, extracts indicators with regular expressions, asks Claude
-for threat entities and relationships, validates every claim against the source text, and merges
-the result into one deduplicated knowledge graph you can explore. Ten poisoned test reports prove
-the guardrails work and a benign control proves they do not over-block. Agent mode and deployment
-are the subject of later phases.
+**Phase 6 of 7 — agent mode.** The app ingests a PDF or HTML report, strips hidden content,
+screens for prompt injection, extracts indicators with regular expressions, asks Claude for threat
+entities and relationships, validates every claim against the source text, and merges the result
+into one deduplicated knowledge graph you can explore. An optional bounded agent can then search
+the report, map behaviours to MITRE ATT&CK and query the existing graph, with every step traced.
+Deployment is the subject of the final phase.
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ are the subject of later phases.
 | 3 | Claude extraction with schema, grounding validation, caching, cost tracking | Done |
 | 4 | Knowledge graph, normalization, dedup, versioned storage, explorer | Done |
 | 5 | Layered guardrails, poisoned test corpus, threat model | Done |
-| 6 | Bounded agent mode with ATT&CK mapping, run traces, evaluation | Not started |
+| 6 | Bounded agent mode with ATT&CK mapping, run traces, evaluation | Done |
 | 7 | Supabase storage, passwords, daily caps, deployment, v1.0 | Not started |
 
 ## Tech stack
@@ -81,6 +81,9 @@ All settings live in `.env`, which is never committed. See `.env.example` for th
 | `MAX_OUTPUT_TOKENS` | `4000` | Output budget per chunk |
 | `INJECTION_BLOCK_ON` | `high` | `high`, `medium` (over-blocks) or `none` (report only) |
 | `INJECTION_CLASSIFIER` | `none` | Hook for a model-based classifier; only `none` is implemented |
+| `AGENT_MAX_TOOL_CALLS` | `8` | Hard ceiling on agent tool calls per run |
+| `AGENT_MAX_INPUT_TOKENS` | `60000` | Hard ceiling on cumulative agent input tokens |
+| `AGENT_MAX_SECONDS` | `120` | Hard wall-clock ceiling per agent run |
 
 ## Project layout
 
@@ -110,6 +113,10 @@ guards/             Guardrail layers
   sanitize_pdf.py   Quarantines tiny, white, off-page and invisible-render spans
   injection.py      Heuristic prompt-injection scanner with a HIGH/MEDIUM policy
   pipeline.py       Where the layers meet the pipeline; the SecurityReport
+agent/              Bounded agent mode
+  attack_data.py    MITRE ATT&CK loader with BM25 search and exact-id lookup
+  tools.py          The four read-only tools and their argument schemas
+  loop.py           The bounded loop, budgets, validation and the pipeline diff
 graph/              Knowledge graph
   model.py          Node/edge shapes, neighborhood and detail queries
   normalize.py      Name normalization, alias map, duplicate detection
@@ -125,6 +132,10 @@ guards/             Guardrail layers
   sanitize_pdf.py   Quarantines tiny, white, off-page and invisible-render spans
   injection.py      Heuristic prompt-injection scanner with a HIGH/MEDIUM policy
   pipeline.py       Where the layers meet the pipeline; the SecurityReport
+agent/              Bounded agent mode
+  attack_data.py    MITRE ATT&CK loader with BM25 search and exact-id lookup
+  tools.py          The four read-only tools and their argument schemas
+  loop.py           The bounded loop, budgets, validation and the pipeline diff
 graph/              Knowledge graph (Phase 4)
 guards/             Guardrail layers (Phase 5)
 agent/              Bounded agent mode (Phase 6)
@@ -257,6 +268,46 @@ truncate the graph, and the last five versions are kept as backups restorable fr
 Maintenance page. Saves use an optimistic version number: if the stored version changed since
 load, the save is rejected, and the app reloads and re-merges onto the newer graph rather than
 overwriting someone else's upload. Merging is idempotent, which is what makes that retry safe.
+
+## Agent mode
+
+An **optional** "deep analysis" on top of the pipeline. The pipeline stays the default: agent mode
+only ever runs on an explicit second click, and if it produces nothing the pipeline result stands
+unchanged.
+
+The agent gets four tools, **all read-only**: `search_report` (BM25 over the current report),
+`lookup_attack` (MITRE ATT&CK, from a local copy), `query_graph` (a read-only snapshot of the
+existing graph) and `submit_findings`, which is the only way to end the loop. There is deliberately
+no write tool anywhere in `agent/tools.py`, so "the model decided to save something" is not a
+reachable state — a test asserts no storage write happens during a run.
+
+**Three hard budgets**, because an agent loop without a ceiling is an unbounded bill: 8 tool calls,
+60,000 cumulative input tokens, and 120 seconds. Whichever is reached first triggers one final
+"submit now" message; if the model still does not submit, the run ends with status
+`no_submission` and the pipeline result is kept. The loop always terminates in a defined status.
+
+Agent output faces the **same validator as the pipeline**, run against the full report text, plus
+one extra check: an ATT&CK technique id must exist in the local dataset, and the technique's *name*
+is taken from that dataset rather than from the model, so the graph cannot contain a real-looking
+id attached to an invented name. Tool results are wrapped in nonce delimiters and scanned; a
+high-severity finding replaces the content before the model sees it, because `search_report`
+returns report text and is exactly as hostile as the report.
+
+Every run is saved to `data/runs/` and rendered step by step on the Agent Runs page: which tool
+was called, with what arguments, what came back, and where the budget went.
+
+Setup needs the ATT&CK dataset once (~38 MB, gitignored):
+
+```bash
+python scripts/fetch_attack.py
+```
+
+Comparing the two modes on the fixtures costs money, so the script estimates first and asks:
+
+```bash
+python scripts/compare_modes.py --dry-run   # estimate only, calls nothing
+python scripts/compare_modes.py             # asks before spending
+```
 
 ## Security design
 

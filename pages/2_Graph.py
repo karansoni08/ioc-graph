@@ -249,6 +249,12 @@ def main() -> None:
         present_types = sorted({attributes.get("type", "") for _, attributes in nodes})
         type_filter = st.multiselect("Entity types", present_types, default=present_types)
         show_reports = st.toggle("Show report nodes", value=False)
+        found_by = st.radio(
+            "Found by",
+            options=["both", "pipeline", "agent"],
+            horizontal=True,
+            help="Filter edges by which mode produced them.",
+        )
         depth = st.slider("Neighborhood depth", 1, 2, 1)
         max_nodes = st.slider("Max nodes", 20, 300, 150, step=10)
 
@@ -315,8 +321,10 @@ def main() -> None:
         visible = {node.id for node in agraph_nodes}
         agraph_edges = [
             Edge(source=source, target=target, label="" if key == REPORTED_IN else str(key))
-            for source, target, key in view.edges(keys=True)
-            if source in visible and target in visible
+            for source, target, key, data in view.edges(keys=True, data=True)
+            if source in visible
+            and target in visible
+            and (found_by == "both" or data.get("source", "pipeline") == found_by)
         ]
 
         clicked = agraph(

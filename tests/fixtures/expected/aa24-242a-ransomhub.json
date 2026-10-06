@@ -278,5 +278,33 @@
       "https://samuelelena.co/npm/module.tripadvisor/module.tripadvisor",
       "https://samuelelena.co/npm/module.tripadvisor/module.tripadvisor.js"
     ]
-  }
+  },
+  "attack_techniques": [
+    "T1003",
+    "T1018",
+    "T1021.001",
+    "T1036",
+    "T1046",
+    "T1047",
+    "T1048.002",
+    "T1048.003",
+    "T1059.001",
+    "T1068",
+    "T1070",
+    "T1098",
+    "T1110.003",
+    "T1136",
+    "T1190",
+    "T1210",
+    "T1219",
+    "T1486",
+    "T1490",
+    "T1537",
+    "T1566",
+    "T1588.005"
+  ],
+  "attack_techniques_source": "Technique ids printed in the advisory's own ATT&CK tables, checked against local ATT&CK 19.2. Ids in attack_techniques_unavailable were REVOKED or renumbered by MITRE after the advisory was published, so no correct mapping to them is possible against the current dataset. They are excluded from the scored ground truth and listed here so the gap is visible rather than silent.",
+  "attack_techniques_unavailable": [
+    "T1562.001"
+  ]
 }

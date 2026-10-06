@@ -23,15 +23,18 @@ from extract.llm_extract import (
     run_llm_extraction,
 )
 from extract.models import IOC_TYPES, IOCExtraction
+from agent.attack_data import is_available as attack_available
+from agent.loop import run_agent
 from graph.persist import merge_and_save
 from ingest.errors import IngestError
 from ingest.loader import load_document
 from ingest.models import Document
 from llm.base import LLMError
 from llm.factory import get_provider
-from llm.pricing import format_cost, is_known_model
-from storage.base import VersionConflict
+from llm.pricing import estimate_cost, format_cost, is_known_model
+from storage.base import StorageError, VersionConflict
 from storage.factory import get_store
+from storage.local import LocalGraphStore
 
 st.set_page_config(page_title="Ingest — IOC Graph", layout="wide")
 
@@ -486,6 +489,7 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
         st.caption("A cached analysis exists for this report and model.")
         render_analysis(cached)
         render_add_to_graph(document, extraction, cached)
+        render_agent_section(document, extraction, cached)
         return
 
     if not has_api_key():
@@ -541,6 +545,146 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
     status.update(label="Analysis complete", state="complete")
     render_analysis(analysis)
     render_add_to_graph(document, extraction, analysis)
+    render_agent_section(document, extraction, analysis)
+
+
+def render_agent_section(
+    document: Document, extraction: IOCExtraction, analysis: ReportAnalysis
+) -> None:
+    """Optional deep analysis. The pipeline stays the default; this is strictly on top."""
+    st.divider()
+    st.subheader("Deep analysis (agent mode)")
+    st.caption(
+        "An optional bounded agent that can search the report, look up MITRE ATT&CK techniques "
+        "and query the existing graph, then submit findings. The pipeline result above is the "
+        "default; this only adds to it."
+    )
+
+    if not has_api_key():
+        st.caption("Set ANTHROPIC_API_KEY to enable agent mode.")
+        return
+
+    if not attack_available():
+        st.warning(
+            "MITRE ATT&CK data is missing, so technique mapping would be unavailable. "
+            "Run `python scripts/fetch_attack.py` first."
+        )
+        return
+
+    model = settings.anthropic_agent_model
+    # Worst case: every tool call uses the full input budget and the full output budget.
+    worst_case = estimate_cost(
+        model,
+        settings.agent_max_input_tokens,
+        settings.max_output_tokens * (settings.agent_max_tool_calls + 1),
+    )
+    st.caption(
+        f"Budgets: {settings.agent_max_tool_calls} tool calls, "
+        f"{settings.agent_max_input_tokens:,} input tokens, {settings.agent_max_seconds}s. "
+        f"Maximum possible cost on {model}: {format_cost(worst_case)}."
+    )
+
+    if not st.button("Run deep analysis", key="agent_run"):
+        st.caption("Agent mode runs only when you click. Nothing has been sent yet.")
+        return
+
+    store = get_store(settings)
+    try:
+        snapshot, _ = store.load()
+    except StorageError:
+        snapshot = None
+    if snapshot is None:
+        from graph.model import new_graph
+
+        snapshot = new_graph()
+
+    status = st.status("Running agent…", expanded=True)
+    try:
+        import anthropic
+
+        from config import get_api_key
+
+        client = anthropic.Anthropic(api_key=get_api_key(), timeout=120.0, max_retries=3)
+        run = run_agent(
+            document, extraction, analysis, snapshot, client, settings, model=model
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced to the user, never a stack trace
+        status.update(label="Agent run failed", state="error")
+        st.error(f"The agent run could not complete: {exc}")
+        return
+
+    status.update(label=f"Agent finished ({run.status})", state="complete")
+
+    # Save the trace whatever the outcome: a run that produced nothing is still evidence.
+    if isinstance(store, LocalGraphStore):
+        store.save_run(run.run_id, run.to_dict())
+
+    columns = st.columns(5)
+    columns[0].metric("Status", run.status)
+    columns[1].metric("Tool calls", run.tool_calls)
+    columns[2].metric("New items", run.diff.total_new)
+    columns[3].metric("Tokens", f"{run.input_tokens + run.output_tokens:,}")
+    columns[4].metric("Cost", format_cost(run.cost_usd))
+
+    if run.status != "submitted":
+        st.warning(
+            f"{run.stop_note or 'The agent did not submit findings.'} "
+            "The pipeline result above is unchanged."
+        )
+        st.page_link("pages/5_Agent_Runs.py", label="See the full trace", icon=":material/timeline:")
+        return
+
+    st.caption("Steps")
+    for step in run.steps:
+        label = f"{step.index + 1}. {step.tool}"
+        if step.withheld:
+            label += " (result withheld)"
+        with st.expander(label):
+            st.text(step.result_preview or "(empty)")
+
+    if run.diff.new_entities or run.diff.new_relationships or run.diff.new_attack_patterns:
+        st.caption("Added over the pipeline")
+        for item in run.diff.new_entities + run.diff.new_relationships + run.diff.new_attack_patterns:
+            st.text(f"+ {item}")
+    else:
+        st.caption("The agent did not add anything the pipeline had missed.")
+
+    if run.attack_patterns:
+        st.caption("Validated ATT&CK mappings")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "technique": pattern["technique_id"],
+                        "name": pattern["name"],
+                        "entity": pattern.get("entity", ""),
+                    }
+                    for pattern in run.attack_patterns
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    name = st.text_input("Your name", max_chars=50, key="agent_name")
+    if st.button("Add agent findings to graph", type="primary", key="agent_merge"):
+        try:
+            stats, version = merge_and_save(
+                store,
+                document,
+                extraction,
+                run.analysis,
+                ingested_by=name.strip(),
+                mode="agent",
+            )
+        except VersionConflict as exc:
+            st.error(str(exc))
+            return
+        st.success(
+            f"Merged agent findings (version {version}): +{stats.new_nodes} nodes, "
+            f"+{stats.new_edges} edges."
+        )
+        st.page_link("pages/2_Graph.py", label="Explore the graph", icon=":material/hub:")
 
 
 def main() -> None:

@@ -68,6 +68,11 @@ class Settings:
     # "medium" is stricter and will over-block, "none" reports without excluding anything.
     injection_block_on: str = "high"
     injection_classifier: str = "none"
+    # Phase 6 agent budgets. All three are hard ceilings: an agent loop without them is an
+    # unbounded bill.
+    agent_max_tool_calls: int = 8
+    agent_max_input_tokens: int = 60_000
+    agent_max_seconds: int = 120
 
     @property
     def max_file_bytes(self) -> int:
@@ -89,6 +94,9 @@ def get_settings() -> Settings:
         max_output_tokens=_lookup_int("MAX_OUTPUT_TOKENS", 4000),
         injection_block_on=(_lookup("INJECTION_BLOCK_ON") or "high").lower(),
         injection_classifier=(_lookup("INJECTION_CLASSIFIER") or "none").lower(),
+        agent_max_tool_calls=_lookup_int("AGENT_MAX_TOOL_CALLS", 8),
+        agent_max_input_tokens=_lookup_int("AGENT_MAX_INPUT_TOKENS", 60_000),
+        agent_max_seconds=_lookup_int("AGENT_MAX_SECONDS", 120),
     )
 
 
