@@ -348,3 +348,45 @@ class TestLibraryDownloads:
             except requests.RequestException as exc:
                 broken.append(f"{report.advisory_id} -> {type(exc).__name__}")
         assert broken == [], f"library URLs no longer resolve: {broken}"
+
+
+class TestSelectorStatePersistence:
+    """Regression: a library report must survive the reruns Streamlit performs.
+
+    Streamlit reruns the whole script on every interaction, and `st.button` returns True only on
+    the run where it was clicked. The first version of `choose_source` returned early when that
+    button was False, which discarded the loaded report on the very next rerun — so you could
+    load a report, see its indicators, then click "Add to graph" and watch the page reset without
+    merging anything.
+
+    These assert the structural properties that made it possible, because the behaviour itself
+    needs a live Streamlit session to exercise.
+    """
+
+    SOURCE = Path("pages/1_Ingest.py")
+
+    def _choose_source(self) -> str:
+        body = self.SOURCE.read_text(encoding="utf-8")
+        start = body.index("def choose_source()")
+        return body[start : body.index("\ndef ", start + 1)]
+
+    def test_no_early_return_none_inside_the_selector(self) -> None:
+        """Any `return None` before the end is how the saved choice gets skipped."""
+        assert "return None" not in self._choose_source()
+
+    def test_the_saved_choice_is_returned_at_the_end(self) -> None:
+        source = self._choose_source()
+        assert source.rstrip().endswith('return st.session_state.get("library_choice")')
+
+    def test_the_choice_is_stored_in_session_state(self) -> None:
+        """Local variables do not survive a rerun; session state does."""
+        assert 'st.session_state["library_choice"]' in self._choose_source()
+
+    def test_an_upload_clears_a_remembered_library_choice(self) -> None:
+        """Otherwise a stale library report would shadow a freshly uploaded one."""
+        source = self._choose_source()
+        upload_block = source[source.index("with upload_tab:") : source.index("with library_tab:")]
+        assert 'st.session_state.pop("library_choice", None)' in upload_block
+
+    def test_the_selection_can_be_cleared(self) -> None:
+        assert "Clear selection" in self._choose_source()
