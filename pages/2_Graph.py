@@ -101,6 +101,26 @@ MIN_NODE_SIZE = 11
 MAX_NODE_SIZE = 34
 
 
+def filter_key(attributes: dict) -> str:
+    """The value the type filter matches on.
+
+    Indicators are split by their IOC type. Lumping all of them under one "indicator" entry made
+    the filter almost useless on a real graph: indicators are the overwhelming majority of nodes
+    (429 of 486 here), so the only choice it offered was "nearly everything" or "nearly nothing".
+    Splitting them lets you ask for just the CVEs, or just the hashes.
+    """
+    if attributes.get("type") == "indicator":
+        return f"indicator:{attributes.get('ioc_type') or 'unknown'}"
+    return attributes.get("type", "")
+
+
+def filter_label(key: str) -> str:
+    """How a filter key reads in the picker."""
+    if key.startswith("indicator:"):
+        return f"indicator · {key.split(':', 1)[1]}"
+    return key
+
+
 def family_of(node_type: str) -> str:
     return TYPE_FAMILY.get(node_type, "observable")
 
@@ -334,7 +354,30 @@ def main() -> None:
                 _select(candidate)
 
         present_types = sorted({attributes.get("type", "") for _, attributes in nodes})
-        type_filter = st.multiselect("Entity types", present_types, default=present_types)
+
+        # Counted from the whole graph, not the current view, so the option list does not
+        # reshuffle every time the neighbourhood changes under you.
+        counts: dict[str, int] = {}
+        for _, attributes in nodes:
+            key = filter_key(attributes)
+            counts[key] = counts.get(key, 0) + 1
+
+        # Named entities first, then indicator sub-types; each group alphabetical.
+        ordered_keys = sorted(
+            counts, key=lambda k: (k.startswith("indicator:"), filter_label(k))
+        )
+        option_labels = {f"{filter_label(k)}  ({counts[k]})": k for k in ordered_keys}
+
+        chosen_labels = st.multiselect(
+            "Entity and indicator types",
+            options=list(option_labels),
+            default=list(option_labels),
+            help=(
+                "Indicators are split by IOC type — CVEs, hashes, domains, URLs and so on — "
+                "because they outnumber everything else combined."
+            ),
+        )
+        type_filter = {option_labels[label] for label in chosen_labels}
         show_reports = st.toggle("Show report nodes", value=False)
         found_by = st.radio(
             "Found by",
@@ -417,7 +460,11 @@ def main() -> None:
         agraph_nodes = []
         for identifier, attributes in view.nodes(data=True):
             node_type = attributes.get("type", "")
-            if node_type != "report" and type_filter and node_type not in type_filter:
+            if (
+                node_type != "report"
+                and type_filter
+                and filter_key(attributes) not in type_filter
+            ):
                 continue
             is_selected = identifier == selected
             agraph_nodes.append(
@@ -432,7 +479,11 @@ def main() -> None:
                     color=_node_color(node_type, is_selected),
                     borderWidth=3 if is_selected else 0,
                     borderWidthSelected=3,
-                    title=f"{node_type} · {degrees.get(identifier, 0)} connection(s)",
+                    # Shows the IOC type for indicators, since colour only carries the family.
+                    title=(
+                        f"{filter_label(filter_key(attributes))} · "
+                        f"{degrees.get(identifier, 0)} connection(s)"
+                    ),
                     font={
                         "color": SELECTED_RING if is_selected else LABEL_COLOR,
                         "size": 15 if is_selected else 12,

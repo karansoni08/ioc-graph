@@ -698,3 +698,65 @@ class TestSameNameAcrossTypes:
         graph.add_node("malware--advisory.pdf", type="malware", name="advisory.pdf")
         _report_same_name_pairs(graph)
         assert capsys.readouterr().out == ""
+
+
+class TestIndicatorTypeFilter:
+    """Indicators are split by IOC type in the graph filter.
+
+    Lumping them under one "indicator" entry made the filter near-useless: indicators are 429 of
+    486 nodes on the real graph, so the only choice it offered was nearly everything or nearly
+    nothing. Splitting lets you ask for just the CVEs, or just the hashes.
+    """
+
+    def _helpers(self):
+        from pathlib import Path
+
+        source = Path("pages/2_Graph.py").read_text(encoding="utf-8")
+        namespace: dict = {}
+        exec(
+            source[source.index("def filter_key") : source.index("def family_of")],
+            namespace,
+        )
+        return namespace["filter_key"], namespace["filter_label"]
+
+    def test_indicators_split_by_ioc_type(self) -> None:
+        filter_key, _ = self._helpers()
+        assert filter_key({"type": "indicator", "ioc_type": "cve"}) == "indicator:cve"
+        assert filter_key({"type": "indicator", "ioc_type": "sha256"}) == "indicator:sha256"
+        assert filter_key({"type": "indicator", "ioc_type": "ipv4"}) != filter_key(
+            {"type": "indicator", "ioc_type": "domain"}
+        )
+
+    def test_named_entities_keep_their_plain_type(self) -> None:
+        filter_key, _ = self._helpers()
+        assert filter_key({"type": "malware"}) == "malware"
+        assert filter_key({"type": "threat-actor"}) == "threat-actor"
+
+    def test_an_indicator_without_an_ioc_type_is_still_filterable(self) -> None:
+        """One node in the real graph has no ioc_type; it must not vanish from the picker."""
+        filter_key, _ = self._helpers()
+        assert filter_key({"type": "indicator"}) == "indicator:unknown"
+        assert filter_key({"type": "indicator", "ioc_type": None}) == "indicator:unknown"
+
+    def test_labels_are_readable(self) -> None:
+        filter_key, filter_label = self._helpers()
+        assert filter_label("indicator:cve") == "indicator · cve"
+        assert filter_label("malware") == "malware"
+
+    def test_every_ioc_type_in_the_real_graph_gets_its_own_key(self) -> None:
+        """Guards against a change that silently re-merges the sub-types."""
+        filter_key, _ = self._helpers()
+        ioc_types = ["ipv4", "ipv6", "domain", "url", "md5", "sha1", "sha256", "sha512", "email", "cve"]
+        keys = {filter_key({"type": "indicator", "ioc_type": t}) for t in ioc_types}
+        assert len(keys) == len(ioc_types)
+
+    def test_colour_family_is_unaffected_by_the_split(self) -> None:
+        """All indicators stay one colour: only four hues validate on an all-pairs canvas."""
+        from pathlib import Path
+
+        source = Path("pages/2_Graph.py").read_text(encoding="utf-8")
+        namespace: dict = {}
+        exec(source[source.index("FAMILY_COLOR = {") : source.index("def filter_key")], namespace)
+        exec(source[source.index("def family_of") : source.index("def _node_size")], namespace)
+        assert namespace["family_of"]("indicator") == "observable"
+        assert namespace["color_of"]("indicator") == namespace["FAMILY_COLOR"]["observable"]
