@@ -467,9 +467,29 @@ class TestRenderingAudit:
     """Layer 4: no untrusted text may reach an unsafe Streamlit renderer."""
 
     def _app_files(self) -> list[Path]:
-        files = [PROJECT_ROOT / "app.py"]
-        files.extend(sorted((PROJECT_ROOT / "pages").glob("*.py")))
-        return [path for path in files if path.exists()]
+        """Every file that renders UI, discovered rather than listed.
+
+        This used to hardcode app.py plus pages/*.py. A stray `app 2.py` — a macOS duplicate of
+        the Phase 2 entry point, with no auth gate — sat in the repo for eight commits without
+        being audited, because it was not on the list. Any file that imports Streamlit can render,
+        so the audit finds them instead of trusting a list to stay current.
+        """
+        candidates = sorted(PROJECT_ROOT.glob("*.py")) + sorted((PROJECT_ROOT / "pages").glob("*.py"))
+        files = []
+        for path in candidates:
+            if not path.exists():
+                continue
+            source = path.read_text(encoding="utf-8")
+            if "import streamlit" in source:
+                files.append(path)
+        return files
+
+    def test_the_audit_actually_finds_the_ui_files(self) -> None:
+        """Guards the discovery above: an empty file list would make every audit below vacuous."""
+        names = {path.name for path in self._app_files()}
+        assert "app.py" in names
+        assert "2_Graph.py" in names
+        assert len(names) >= 6, names
 
     def test_no_unsafe_allow_html_anywhere(self) -> None:
         """Matches the keyword-argument form, not a bare mention.
@@ -619,3 +639,34 @@ class TestOutputValidationHardening:
         result, report = validate(payload, document.text, iocs)
         assert len(result.entities) == 1
         assert report.dropped_count == 0
+
+
+class TestRepositoryHygiene:
+    """A public repo should not carry stray duplicates of its own entry point."""
+
+    def test_no_duplicate_artifact_files_are_tracked(self) -> None:
+        import subprocess
+
+        tracked = subprocess.run(
+            ["git", "ls-files"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split("\n")
+
+        # macOS duplicates ("app 2.py"), editor backups and merge leftovers.
+        offenders = [
+            name
+            for name in tracked
+            if name
+            and re.search(r"(?: \d+\.py$|\.orig$|\.bak$|\.rej$|~$)", name)
+        ]
+        assert offenders == [], f"stray duplicate files tracked: {offenders}"
+
+    def test_every_root_python_file_is_intentional(self) -> None:
+        """A new root-level module should be a deliberate choice, not an accident."""
+        expected = {"app.py", "auth.py", "config.py", "usage.py"}
+        actual = {path.name for path in PROJECT_ROOT.glob("*.py")}
+        unexpected = actual - expected
+        assert unexpected == set(), f"unexpected root modules: {unexpected}"
