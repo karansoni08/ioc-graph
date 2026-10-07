@@ -108,10 +108,6 @@ class Settings:
     daily_agent_limit: int = 5
     daily_spend_limit_usd: float = 2.00
     app_timezone: str = "America/Toronto"
-    # Running with no password is a local-development convenience and a disaster in a
-    # deployment, so it must be asked for explicitly. Default OFF means a deployment that
-    # forgets to set the passwords refuses to serve rather than opening to the internet.
-    allow_open_access: bool = False
 
     @property
     def max_file_bytes(self) -> int:
@@ -140,8 +136,6 @@ def get_settings() -> Settings:
         daily_agent_limit=_lookup_int("DAILY_AGENT_LIMIT", 5),
         daily_spend_limit_usd=_lookup_float("DAILY_SPEND_LIMIT_USD", 2.00),
         app_timezone=_lookup("APP_TIMEZONE") or "America/Toronto",
-        allow_open_access=(_lookup("ALLOW_OPEN_ACCESS") or "").strip().lower()
-        in ("1", "true", "yes"),
     )
 
 
@@ -162,8 +156,7 @@ def get_api_key() -> str:
 
 SUPABASE_URL_VAR = "SUPABASE_URL"
 SUPABASE_KEY_VAR = "SUPABASE_SERVICE_KEY"
-VIEW_PASSWORD_VAR = "VIEW_PASSWORD"
-UPLOAD_PASSWORD_VAR = "UPLOAD_PASSWORD"
+APP_PASSWORD_VAR = "APP_PASSWORD"
 
 # Every secret is read on demand through a function, never stored on Settings. Settings is
 # logged, displayed and repr'd in several places; a secret field would eventually leak through
@@ -171,8 +164,7 @@ UPLOAD_PASSWORD_VAR = "UPLOAD_PASSWORD"
 SECRET_VARS = (
     API_KEY_VAR,
     SUPABASE_KEY_VAR,
-    VIEW_PASSWORD_VAR,
-    UPLOAD_PASSWORD_VAR,
+    APP_PASSWORD_VAR,
 )
 
 
@@ -195,21 +187,19 @@ def get_supabase_service_key() -> str:
     return value
 
 
-def get_view_password() -> str | None:
-    return _lookup(VIEW_PASSWORD_VAR)
-
-
-def get_upload_password() -> str | None:
-    return _lookup(UPLOAD_PASSWORD_VAR)
+def get_app_password() -> str | None:
+    """The single password gating the app. None means unconfigured."""
+    return _lookup(APP_PASSWORD_VAR)
 
 
 def access_control_configured() -> bool:
-    """True if at least one password is set.
+    """True if the app password is set.
 
-    When neither is set the app runs open, which is correct for local development and must never
-    be the case in a deployment. The UI says so loudly.
+    When it is not, `auth.require_access` refuses to serve. There is no open mode: an app that
+    falls open when misconfigured is how this project's first deployment ended up publicly
+    accessible with a working API key.
     """
-    return bool(get_view_password() or get_upload_password())
+    return bool(get_app_password())
 
 
 def has_api_key() -> bool:

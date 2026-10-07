@@ -49,9 +49,11 @@ without rewrites.
   (e.g. "Phase 2: regex IOC extraction with refanging").
 
 ## Access control (shared workspace)
-- Two passwords stored in secrets, checked with `hmac.compare_digest`:
-  - `VIEW_PASSWORD`: can browse the graph and node details (no LLM cost)
-  - `UPLOAD_PASSWORD`: can also upload and process reports (spends API credits)
+- ONE password (`APP_PASSWORD`) stored in secrets, checked with `hmac.compare_digest`.
+  Entering it grants full access, including the actions that spend API credits.
+  (Superseded the original view/upload split: simplicity was preferred over role separation,
+  so the daily caps are now the only limit on cost.)
+- The gate fails closed: with no password configured the app refuses to serve.
 - Session-based: once entered, remembered for the browser session only.
 - Lock out for a few minutes after 5 wrong attempts per session.
 - Concurrency: graph saves use an optimistic version number; if the stored version changed

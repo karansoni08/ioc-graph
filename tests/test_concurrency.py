@@ -345,16 +345,15 @@ class TestSecretsAreHidden:
     def test_access_control_detects_configuration(self, monkeypatch) -> None:
         from config import access_control_configured
 
-        monkeypatch.delenv("VIEW_PASSWORD", raising=False)
-        monkeypatch.delenv("UPLOAD_PASSWORD", raising=False)
+        monkeypatch.delenv("APP_PASSWORD", raising=False)
         assert access_control_configured() is False
 
-        monkeypatch.setenv("VIEW_PASSWORD", "something")
+        monkeypatch.setenv("APP_PASSWORD", "something")
         assert access_control_configured() is True
 
 
 class TestPasswordComparison:
-    def test_passwords_are_compared_with_compare_digest(self) -> None:
+    def test_password_is_compared_with_compare_digest(self) -> None:
         """Timing-safe comparison, asserted by reading the source.
 
         A plain `==` leaks the length of the matching prefix through timing, which over many
@@ -362,17 +361,15 @@ class TestPasswordComparison:
         """
         source = Path("auth.py").read_text(encoding="utf-8")
         assert "hmac.compare_digest" in source
-        # No bare equality against a password value.
         assert "candidate ==" not in source
-        assert "== upload_password" not in source
-        assert "== view_password" not in source
+        assert "== expected" not in source
 
-    def test_both_passwords_are_always_compared(self) -> None:
-        """Short-circuiting after the first match would leak which password was correct."""
+    def test_an_unset_password_is_never_matchable(self) -> None:
+        """The check must reject before comparing when nothing is configured."""
         source = Path("auth.py").read_text(encoding="utf-8")
-        check = source.split("def _check_password")[1].split("def ")[0]
-        assert check.index("upload_match") < check.index("if upload_match")
-        assert "view_match = " in check.split("if upload_match")[0]
+        check = source.split("def check_password")[1].split("\ndef ")[0]
+        # The guard has to come before the comparison.
+        assert check.index("if not expected") < check.index("compare_digest")
 
 
 class TestSchemaFile:
@@ -445,14 +442,13 @@ class TestConfigSourceLayering:
         streamlit_secrets({"ANTHROPIC_MODEL": "from-secrets"})
         assert config._lookup("ANTHROPIC_MODEL") == "from-secrets"
 
-    def test_passwords_can_come_from_secrets_alone(
+    def test_password_can_come_from_secrets_alone(
         self, monkeypatch, streamlit_secrets
     ) -> None:
         """This is how the deployed app is configured: secrets only, no .env."""
-        monkeypatch.delenv("VIEW_PASSWORD", raising=False)
-        monkeypatch.delenv("UPLOAD_PASSWORD", raising=False)
-        streamlit_secrets({"VIEW_PASSWORD": "v", "UPLOAD_PASSWORD": "u"})
-        assert config.get_view_password() == "v"
+        monkeypatch.delenv("APP_PASSWORD", raising=False)
+        streamlit_secrets({"APP_PASSWORD": "from-secrets"})
+        assert config.get_app_password() == "from-secrets"
         assert config.access_control_configured() is True
 
     @pytest.mark.use_real_streamlit_secrets

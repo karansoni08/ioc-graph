@@ -12,7 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from auth import ROLE_VIEW, require_access
+from auth import require_access
 from config import access_control_configured, get_settings, has_api_key
 from graph.model import graph_stats, list_reports
 from llm.pricing import format_cost
@@ -25,7 +25,7 @@ settings = get_settings()
 
 
 def main() -> None:
-    access = require_access(ROLE_VIEW)
+    require_access()
 
     st.title("IOC Graph")
     st.caption(
@@ -51,8 +51,7 @@ def main() -> None:
 
     if stats["nodes"] == 0:
         st.info("The graph is empty. Ingest a report to get started.")
-        if access.can_upload:
-            st.page_link("pages/1_Ingest.py", label="Ingest a report", icon=":material/upload:")
+        st.page_link("pages/1_Ingest.py", label="Ingest a report", icon=":material/upload:")
         return
 
     left, right = st.columns([1, 1])
@@ -90,10 +89,7 @@ def main() -> None:
     st.divider()
     links = st.columns(4)
     with links[0]:
-        if access.can_upload:
-            st.page_link("pages/1_Ingest.py", label="Ingest", icon=":material/upload:")
-        else:
-            st.caption("Ingest needs upload access")
+        st.page_link("pages/1_Ingest.py", label="Ingest", icon=":material/upload:")
     with links[1]:
         st.page_link("pages/2_Graph.py", label="Explore the graph", icon=":material/hub:")
     with links[2]:

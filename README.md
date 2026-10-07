@@ -84,9 +84,9 @@ graph is the intersection of what the document says and what the model can prove
   control to prove the guardrails do not over-block.
 - **Bounded agent mode** with four read-only tools, MITRE ATT&CK mapping against a local dataset,
   hard budgets, and a full step-by-step trace of every run.
-- **Shared deployment** with view/upload passwords, daily caps on reports, agent runs and spend
-  enforced race-free on both storage backends, and optimistic concurrency so two simultaneous
-  uploads do not overwrite each other.
+- **Shared deployment** behind a single password that fails closed, with daily caps on reports,
+  agent runs and spend enforced race-free on both storage backends, and optimistic concurrency so
+  two simultaneous uploads do not overwrite each other.
 
 ## Accuracy
 
@@ -302,8 +302,7 @@ See `.env.example` and `.streamlit/secrets.toml.example`.
 | `AGENT_MAX_INPUT_TOKENS` | `60000` | Hard ceiling on cumulative agent input tokens |
 | `AGENT_MAX_SECONDS` | `120` | Hard wall-clock ceiling per agent run |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | none | Required when `STORAGE_BACKEND=supabase` |
-| `VIEW_PASSWORD` / `UPLOAD_PASSWORD` | none | Access control. **If neither is set the app refuses to start** |
-| `ALLOW_OPEN_ACCESS` | `false` | Run with no gate. Local development only; never set it in a deployment |
+| `APP_PASSWORD` | none | The single password gating the app. **Unset means the app refuses to start** |
 | `DAILY_REPORT_LIMIT` | `20` | Reports per day |
 | `DAILY_AGENT_LIMIT` | `5` | Agent runs per day |
 | `DAILY_SPEND_LIMIT_USD` | `2.00` | Estimated spend per day |

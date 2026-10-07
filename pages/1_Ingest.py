@@ -12,7 +12,7 @@ import json
 import pandas as pd
 import streamlit as st
 
-from auth import ROLE_UPLOAD, require_access
+from auth import require_access
 from config import get_settings, has_api_key
 from extract.chunking import chunk_document
 from extract.display import defang, format_pages
@@ -716,7 +716,7 @@ def render_agent_section(
 
 
 def main() -> None:
-    require_access(ROLE_UPLOAD)
+    require_access()
 
     st.title("Ingest a report")
     st.warning(

@@ -1,17 +1,19 @@
-"""Shared-password access control.
+"""Single shared-password access control.
 
-Two passwords, two roles. `view` can browse the graph and read everything; `upload` can also
-ingest reports, run the agent and generate summaries — anything that spends API credits. The
-split exists because the link is shared with several people but the API key belongs to one of
-them.
+One password gates the whole app. Enter it and you get everything; without it nothing renders.
 
-Passwords are compared with `hmac.compare_digest`, which takes the same time whether the first
-character differs or only the last. A plain `==` leaks the length of the matching prefix through
-timing, which over many attempts is enough to recover a password.
+This replaced a two-password design that split browsing from spending. The simpler model is what
+the owner wanted, and the trade is explicit: **everyone who gets in can spend API credits**, so
+the daily caps in `usage.py` are now the only thing limiting what a shared link can cost.
 
-This is not a user system. There are no accounts, no password hashing at rest (the passwords live
-in secrets, not in a database), and no per-user data. It is a door, and `docs/SECURITY.md` records
-exactly what that does and does not buy.
+The password is compared with `hmac.compare_digest`, which takes the same time whether the first
+character differs or the last. A plain `==` leaks the length of the matching prefix through
+timing, which over many attempts is enough to recover the password.
+
+The gate **fails closed**: if no password is configured the app refuses to serve rather than
+opening. That is not a theoretical nicety — the first deployment of this project went live on a
+public URL with no gate and a working API key, because the previous version fell open when
+unconfigured.
 """
 
 from __future__ import annotations
@@ -22,92 +24,62 @@ from dataclasses import dataclass
 
 import streamlit as st
 
-from config import access_control_configured, get_upload_password, get_view_password
-
-ROLE_VIEW = "view"
-ROLE_UPLOAD = "upload"
-ROLE_OPEN = "open"
-
-# Role ordering for permission checks.
-_RANK = {ROLE_VIEW: 1, ROLE_UPLOAD: 2, ROLE_OPEN: 2}
+from config import access_control_configured, get_app_password
 
 MAX_ATTEMPTS = 5
 LOCKOUT_SECONDS = 300
 FAILED_ATTEMPT_DELAY_SECONDS = 1.0
 
-_SESSION_ROLE = "auth_role"
+_SESSION_AUTHED = "auth_ok"
 _SESSION_ATTEMPTS = "auth_attempts"
 _SESSION_LOCKED_UNTIL = "auth_locked_until"
 
 
 @dataclass
 class Access:
-    role: str
+    """Granted access. With a single password there is only one level."""
+
+    authenticated: bool = True
 
     @property
     def can_upload(self) -> bool:
-        return self.role in (ROLE_UPLOAD, ROLE_OPEN)
+        return True
 
     @property
     def can_spend(self) -> bool:
-        """Spending API credits is the thing the view role must not be able to do."""
-        return self.can_upload
+        """Anyone who is in can spend. The daily caps are the limit, not the role."""
+        return True
 
 
-def _check_password(candidate: str) -> str | None:
-    """Return the role the password grants, or None.
+def check_password(candidate: str) -> bool:
+    """Timing-safe comparison against the configured password."""
+    expected = get_app_password()
+    if not expected or not candidate:
+        # An unset password must never be matchable, least of all by empty input.
+        return False
+    return hmac.compare_digest(candidate, expected)
 
-    Both passwords are always compared, even after the first matches, so the time taken does not
-    reveal which one was correct.
-    """
-    upload_password = get_upload_password()
-    view_password = get_view_password()
 
-    upload_match = bool(
-        upload_password and hmac.compare_digest(candidate, upload_password)
-    )
-    view_match = bool(view_password and hmac.compare_digest(candidate, view_password))
-
-    if upload_match:
-        return ROLE_UPLOAD
-    if view_match:
-        return ROLE_VIEW
-    return None
+def is_authenticated() -> bool:
+    return bool(st.session_state.get(_SESSION_AUTHED))
 
 
 def _locked_remaining() -> int:
-    locked_until = st.session_state.get(_SESSION_LOCKED_UNTIL, 0.0)
-    remaining = locked_until - time.time()
+    remaining = st.session_state.get(_SESSION_LOCKED_UNTIL, 0.0) - time.time()
     return int(remaining) if remaining > 0 else 0
 
 
-def current_role() -> str | None:
-    if not access_control_configured():
-        # Only when open access has been asked for explicitly. Otherwise `require_access`
-        # refuses to serve; see `_render_not_configured`.
-        from config import get_settings
-
-        return ROLE_OPEN if get_settings().allow_open_access else None
-    return st.session_state.get(_SESSION_ROLE)
-
-
 def _render_not_configured() -> None:
-    """Shown when no password is set and open access was not explicitly requested.
-
-    This replaced a fail-OPEN default. Previously an app deployed without its secrets served
-    the whole application to anyone with the link, including the buttons that spend API
-    credits — which is exactly what happened on the first deployment of this project. Refusing
-    to serve is the only safe behaviour for a missing gate.
-    """
+    """Shown when no password is set. The app must not open in this state."""
     st.title("IOC Graph")
     st.error(
         "This app is not configured and will not open.\n\n"
-        "No VIEW_PASSWORD or UPLOAD_PASSWORD is set, so there is nothing protecting it. "
-        "Add both to the app's secrets and reload."
+        "No APP_PASSWORD is set, so there is nothing protecting it. "
+        "Add one to the app's secrets and reload."
     )
     st.caption(
-        "Streamlit Community Cloud: Manage app -> Settings -> Secrets. "
-        "Locally: put them in .env, or set ALLOW_OPEN_ACCESS=true to run without a gate."
+        "Streamlit Community Cloud: Manage app → Settings → Secrets. "
+        "Locally: put APP_PASSWORD in .env."
     )
 
 
@@ -118,9 +90,7 @@ def _render_login() -> None:
     remaining = _locked_remaining()
     if remaining:
         minutes, seconds = divmod(remaining, 60)
-        st.error(
-            f"Too many failed attempts. Try again in {minutes}m {seconds:02d}s."
-        )
+        st.error(f"Too many failed attempts. Try again in {minutes}m {seconds:02d}s.")
         return
 
     with st.form("login"):
@@ -130,8 +100,7 @@ def _render_login() -> None:
     if not submitted:
         return
 
-    role = _check_password(candidate)
-    if role is None:
+    if not check_password(candidate):
         # A fixed delay on every failure slows guessing and costs a legitimate user one second.
         time.sleep(FAILED_ATTEMPT_DELAY_SECONDS)
         attempts = st.session_state.get(_SESSION_ATTEMPTS, 0) + 1
@@ -147,74 +116,55 @@ def _render_login() -> None:
             st.error(f"Incorrect password. {MAX_ATTEMPTS - attempts} attempt(s) remaining.")
         return
 
-    st.session_state[_SESSION_ROLE] = role
+    st.session_state[_SESSION_AUTHED] = True
     st.session_state[_SESSION_ATTEMPTS] = 0
     st.rerun()
 
 
-def require_access(min_role: str = ROLE_VIEW) -> Access:
+def require_access() -> Access:
     """Gate a page. Call this before rendering anything else.
 
-    Renders the login form and calls `st.stop()` when access is insufficient, so a page body
-    after this call only ever runs for an authorized session.
+    Renders the gate and calls `st.stop()` when access is not granted, so anything after this
+    call only ever runs for an authenticated session.
     """
-    role = current_role()
+    if not access_control_configured():
+        # Misconfiguration, not a failed login. Deliberately no form: offering one when nothing
+        # is configured invites an empty password to be treated as valid.
+        _render_not_configured()
+        st.stop()
 
-    if role is None:
-        if not access_control_configured():
-            # Misconfiguration, not a failed login. Do not show a form that accepts anything.
-            _render_not_configured()
-            st.stop()
+    if not is_authenticated():
         _render_login()
         st.stop()
 
-    if _RANK.get(role, 0) < _RANK.get(min_role, 99):
-        st.title("Not available")
-        st.warning(
-            "This page needs the upload password. You are signed in with view access, which can "
-            "browse the graph but cannot run anything that spends API credits."
-        )
-        render_sidebar(Access(role))
-        st.stop()
-
-    access = Access(role)
+    access = Access()
     render_sidebar(access)
     return access
 
 
 def render_sidebar(access: Access) -> None:
-    """Role badge, usage, and log out."""
+    """Usage against the daily caps, and log out."""
     with st.sidebar:
-        if access.role == ROLE_OPEN:
-            st.warning(
-                "No password is configured, so this app is OPEN. Set VIEW_PASSWORD and "
-                "UPLOAD_PASSWORD before deploying."
-            )
-        else:
-            label = "Upload access" if access.can_upload else "View access"
-            st.caption(label)
-            if not access.can_upload:
-                st.caption("Read-only: features that spend API credits are hidden.")
-
         render_usage_widget()
-
-        if access.role != ROLE_OPEN:
-            if st.button("Log out"):
-                for key in (_SESSION_ROLE, _SESSION_ATTEMPTS, _SESSION_LOCKED_UNTIL):
-                    st.session_state.pop(key, None)
-                st.rerun()
+        if st.button("Log out"):
+            for key in (_SESSION_AUTHED, _SESSION_ATTEMPTS, _SESSION_LOCKED_UNTIL):
+                st.session_state.pop(key, None)
+            st.rerun()
 
 
 def render_usage_widget() -> None:
-    """Today's usage against the daily caps. Only meaningful on the Supabase backend."""
+    """Today's usage against the daily caps.
+
+    These matter more than they used to: with a single password, everyone who is in can spend,
+    so this is the only ceiling on what a shared link costs.
+    """
     from config import get_settings
     from storage.factory import get_store
     from usage import today_key, usage_summary
 
     settings = get_settings()
     try:
-        store = get_store(settings)
-        summary = usage_summary(store, settings)
+        summary = usage_summary(get_store(settings), settings)
     except Exception:
         return
     if summary is None:

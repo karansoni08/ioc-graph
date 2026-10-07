@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from auth import ROLE_VIEW, require_access
+from auth import require_access
 from config import get_settings
 from llm.pricing import format_cost
 from storage.factory import get_store
@@ -34,7 +34,7 @@ STATUS_HELP = {
 
 
 def main() -> None:
-    access = require_access(ROLE_VIEW)
+    require_access()
 
     st.title("Agent runs")
     st.caption(
@@ -51,8 +51,7 @@ def main() -> None:
     runs = store.list_runs()
     if not runs:
         st.info("No agent runs yet. Run a deep analysis from the Ingest page.")
-        if access.can_upload:
-            st.page_link("pages/1_Ingest.py", label="Ingest a report", icon=":material/upload:")
+        st.page_link("pages/1_Ingest.py", label="Ingest a report", icon=":material/upload:")
         return
 
     st.dataframe(

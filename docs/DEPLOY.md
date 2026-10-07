@@ -30,9 +30,9 @@ ANTHROPIC_AGENT_MODEL = "claude-haiku-4-5-20251001"
 # No Supabase needed for this path. Data does NOT survive an app restart.
 STORAGE_BACKEND = "local"
 
-# Change BOTH of these. See the warning below.
-VIEW_PASSWORD = "PASTE-A-LONG-RANDOM-PASSPHRASE"
-UPLOAD_PASSWORD = "PASTE-A-DIFFERENT-LONG-RANDOM-PASSPHRASE"
+# The single password gating the app. Generate 20+ random characters.
+# Anyone who has it can also spend API credits.
+APP_PASSWORD = "PASTE-A-20-CHARACTER-RANDOM-PASSWORD"
 
 DAILY_REPORT_LIMIT = 20
 DAILY_AGENT_LIMIT = 5
@@ -51,10 +51,14 @@ MAX_CHUNKS_PER_REPORT = 6
 > per-report chunk cap, the file size and page limits, the result cache, and the fact that nothing
 > calls the API without a click, that bounds what a shared link can cost you.
 
-> **Choose strong passwords.** Anything short, dictionary-based, or thematically related to the
-> project ("regex", "llm", "ioc", "graph") is guessable by exactly the audience you are sharing this
-> with. The upload password is what protects your API credits. Generate both with a password
-> manager, 20+ characters, and never reuse them.
+> **Choose a strong password.** Anything short, dictionary-based, or thematically related to the
+> project ("regex", "llm", "ioc", "graph") is guessable by exactly the audience you are sharing
+> this with — and the repository is public, which hands an attacker the vocabulary. Generate 20+
+> random characters with a password manager. This one password is what protects your API credits.
+
+> **If you forget to set it, the app refuses to open.** It will show what is missing instead of
+> serving the application. That is deliberate: an earlier version fell open when unconfigured, and
+> this app's first deployment went live publicly with no gate and a working API key.
 
 ### Or: Hugging Face Spaces
 

