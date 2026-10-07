@@ -760,3 +760,40 @@ class TestIndicatorTypeFilter:
         exec(source[source.index("def family_of") : source.index("def _node_size")], namespace)
         assert namespace["family_of"]("indicator") == "observable"
         assert namespace["color_of"]("indicator") == namespace["FAMILY_COLOR"]["observable"]
+
+
+class TestDegreeIsAPropertyOfTheEntity:
+    """The tooltip and node size report degree in the whole graph, not in the current view.
+
+    The view is an induced subgraph. Measuring degree inside it meant a node whose edges ran to
+    something outside the view — usually the report node, hidden by default — reported zero, so
+    the overview captioned "most connected nodes" displayed "0 connection(s)" on the deployed app.
+    """
+
+    def test_degree_is_measured_on_the_full_graph(self) -> None:
+        from pathlib import Path
+
+        source = Path("pages/2_Graph.py").read_text(encoding="utf-8")
+        assert "degrees = {identifier: graph.degree(identifier)" in source
+        assert "view.degree(identifier)" not in source
+
+    def test_hiding_reports_does_not_zero_an_indicators_degree(self, doc_a, iocs_a, analysis_a) -> None:
+        """The concrete case: an indicator linked only to its report still counts one connection."""
+        graph = new_graph()
+        merge_report(graph, doc_a, iocs_a, analysis_a)
+
+        indicators = [
+            identifier
+            for identifier, attributes in graph.nodes(data=True)
+            if attributes.get("type") == "indicator"
+        ]
+        assert indicators, "fixture produced no indicators"
+
+        keep = top_nodes_by_degree(graph, limit=50, include_reports=False)
+        view = graph.subgraph(keep).copy()
+        in_view = [identifier for identifier in indicators if identifier in view]
+        assert in_view, "no indicator survived the report-free view"
+
+        # Every indicator has at least its report edge, so no full-graph degree may be zero —
+        # whereas inside the view some of these genuinely measure zero, which is the bug.
+        assert all(graph.degree(identifier) > 0 for identifier in in_view)

@@ -454,7 +454,12 @@ def main() -> None:
         else:
             st.caption(f"Most connected nodes ({view.number_of_nodes()}). Click one, or search below.")
 
-        degrees = {identifier: view.degree(identifier) for identifier in view.nodes()}
+        # Degree in the WHOLE graph, not in the view. The view is an induced subgraph, so a node
+        # whose edges run to anything outside it — most often the report node, which is hidden by
+        # default — measured zero, and the overview captioned "most connected nodes" then showed
+        # "0 connection(s)". Degree is a property of the entity, so it must not change with the
+        # viewport; this also stops nodes resizing as you filter.
+        degrees = {identifier: graph.degree(identifier) for identifier in view.nodes()}
         max_degree = max(degrees.values()) if degrees else 1
 
         agraph_nodes = []
