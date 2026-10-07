@@ -443,54 +443,132 @@ def render_injection_findings(document: Document) -> None:
         )
 
 
-def render_add_to_graph(
-    document: Document, extraction: IOCExtraction, analysis: ReportAnalysis
-) -> None:
-    """Merge this report into the shared graph.
+def _merge_signature(
+    document: Document, analysis: ReportAnalysis | None, ingested_by: str
+) -> tuple:
+    """What this report would contribute to the graph right now.
 
-    Separate from analysis on purpose: analysing is reversible and local, whereas merging
-    changes the shared graph everyone sees.
+    Merging writes the graph file and increments its version, so doing it on every Streamlit
+    rerun would churn versions and manufacture conflicts for other sessions. The signature
+    changes only when the contribution would actually differ, which is what makes "merge
+    automatically" safe to call from the top of a page that reruns constantly.
     """
-    st.divider()
-    st.subheader("Add to the knowledge graph")
-
-    name = st.text_input(
-        "Your name (recorded as who ingested this report)",
-        max_chars=50,
-        help="Free text. There are no accounts; this is just a note on the report.",
-    )
-    st.caption(
-        "Merging is idempotent: adding the same report twice replaces its previous "
-        "contribution rather than duplicating it."
+    return (
+        document.sha256,
+        analysis.model if analysis else None,
+        analysis.prompt_version if analysis else None,
+        len(analysis.entities) if analysis else 0,
+        len(analysis.relationships) if analysis else 0,
+        ingested_by,
     )
 
-    if not st.button("Add to graph", type="primary"):
+
+def indicators_only_analysis(document: Document) -> ReportAnalysis:
+    """A placeholder result for a report that has had no LLM pass.
+
+    The graph is still worth building from regex indicators alone: they are the authoritative
+    source of IOCs, and the LLM only ever adds entities and relationships on top.
+    """
+    return ReportAnalysis(
+        document_sha256=document.sha256,
+        model="regex only",
+        prompt_version="n/a",
+    )
+
+
+def auto_merge(
+    document: Document, extraction: IOCExtraction, analysis: ReportAnalysis | None
+) -> None:
+    """Build the graph from this report automatically, without a button.
+
+    Runs as soon as indicators exist, and again when an LLM analysis appears, because merging is
+    idempotent: re-merging replaces this report's previous contribution rather than stacking a
+    second copy on top.
+    """
+    ingested_by = st.session_state.get("ingested_by", "").strip()
+    signature = _merge_signature(document, analysis, ingested_by)
+
+    if st.session_state.get("auto_merged") == signature:
+        # Already in the graph in exactly this state; nothing to write.
         return
 
     store = get_store(settings)
     try:
         stats, version = merge_and_save(
-            store, document, extraction, analysis, ingested_by=name.strip()
+            store,
+            document,
+            extraction,
+            analysis or indicators_only_analysis(document),
+            ingested_by=ingested_by,
+            mode="pipeline" if analysis else "indicators-only",
         )
     except VersionConflict as exc:
-        st.error(str(exc))
+        # Someone else saved while we were merging. merge_and_save already retried three times.
+        st.warning(f"{exc} The report is not in the graph yet; reload to try again.")
+        return
+    except StorageError as exc:
+        st.error(f"Could not update the graph: {exc}")
         return
 
-    st.success(f"Merged into the graph (version {version}).")
-    columns = st.columns(4)
-    columns[0].metric("New nodes", stats.new_nodes)
-    columns[1].metric("Updated nodes", stats.updated_nodes)
-    columns[2].metric("New edges", stats.new_edges)
-    columns[3].metric("Removed", stats.removed_nodes)
-    if stats.by_type:
+    st.session_state["auto_merged"] = signature
+    st.session_state["last_merge"] = {
+        "version": version,
+        "new_nodes": stats.new_nodes,
+        "updated_nodes": stats.updated_nodes,
+        "new_edges": stats.new_edges,
+        "by_type": dict(stats.by_type),
+    }
+
+
+def render_graph_status(document: Document, analysis: ReportAnalysis | None) -> None:
+    """Show what the automatic merge did, and let the attribution be set."""
+    st.divider()
+    st.subheader("Knowledge graph")
+
+    merge = st.session_state.get("last_merge")
+    if merge is None:
+        st.caption("This report has not been merged into the graph.")
+        return
+
+    if analysis is None:
+        st.success(
+            f"Added to the graph automatically (version {merge['version']}) — indicators only. "
+            "Running the analysis below will add entities and relationships."
+        )
+    else:
+        st.success(
+            f"Graph updated automatically (version {merge['version']}) with indicators, "
+            "entities and relationships."
+        )
+
+    columns = st.columns(3)
+    columns[0].metric("New nodes", merge["new_nodes"])
+    columns[1].metric("Updated nodes", merge["updated_nodes"])
+    columns[2].metric("New edges", merge["new_edges"])
+
+    if merge["by_type"]:
         st.caption("New nodes by type")
         st.dataframe(
             pd.DataFrame(
-                [{"type": key, "count": value} for key, value in sorted(stats.by_type.items())]
+                [{"type": k, "count": v} for k, v in sorted(merge["by_type"].items())]
             ),
             use_container_width=True,
             hide_index=True,
         )
+
+    st.text_input(
+        "Your name (recorded as who ingested this report)",
+        max_chars=50,
+        key="ingested_by",
+        help=(
+            "Optional free text; there are no accounts. Changing it re-merges the report so the "
+            "attribution is recorded."
+        ),
+    )
+    st.caption(
+        "Merging is idempotent: re-merging the same report replaces its previous contribution "
+        "rather than duplicating it."
+    )
     st.page_link("pages/2_Graph.py", label="Explore the graph", icon=":material/hub:")
 
 
@@ -504,7 +582,6 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
     if cached is not None:
         st.caption("A cached analysis exists for this report and model.")
         render_analysis(cached)
-        render_add_to_graph(document, extraction, cached)
         render_agent_section(document, extraction, cached)
         return
 
@@ -572,7 +649,10 @@ def render_llm_section(document: Document, extraction: IOCExtraction) -> None:
 
     status.update(label="Analysis complete", state="complete")
     render_analysis(analysis)
-    render_add_to_graph(document, extraction, analysis)
+    # Merge again now the analysis exists, so entities and relationships reach the graph
+    # without another click. Idempotent: this replaces the indicators-only contribution.
+    auto_merge(document, extraction, analysis)
+    render_graph_status(document, analysis)
     render_agent_section(document, extraction, analysis)
 
 
@@ -888,7 +968,14 @@ def main() -> None:
 
     st.divider()
     extraction = extract_indicators(document.sha256, document)
+
+    # The graph builds itself as soon as indicators exist. If an analysis is already cached for
+    # this report, include it in the same merge so one write covers both.
+    cached_analysis = load_cached(document.sha256, settings.anthropic_model, settings)
+    auto_merge(document, extraction, cached_analysis)
+
     render_iocs(document, extraction)
+    render_graph_status(document, cached_analysis)
 
     render_save_results(document, extraction, load_cached(document.sha256, settings.anthropic_model, settings))
 

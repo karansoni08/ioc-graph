@@ -240,6 +240,21 @@ else's upload. Merging is idempotent, which is what makes that retry safe.
 
 ## Report library and output
 
+**The graph builds itself.** As soon as a report's indicators are extracted it is merged into the
+graph automatically — no button. Running the LLM analysis merges again, adding entities and
+relationships. That is safe because merging is idempotent: re-merging replaces a report's previous
+contribution rather than stacking a second copy on top.
+
+Merging writes the graph and increments its version, so it is guarded by a signature of what the
+report would contribute (hash, model, prompt version, entity and relationship counts,
+attribution). Streamlit reruns the script on every keystroke; without that guard the version would
+climb continuously and manufacture conflicts for anyone else saving at the same time.
+
+**Agent findings are the one exception** and still need an explicit click. Merging replaces a
+report's whole contribution, and measurement showed agent runs return nothing in roughly one run
+of three, so auto-merging them would sometimes replace good pipeline entities with an empty
+result.
+
 **Ingesting.** Two ways: upload your own PDF or HTML, or pick from a built-in library of **10
 public CISA advisories** — six ransomware (Akira, Black Basta, RansomHub, CL0P/MOVEit, Medusa,
 LockBit 3.0) and four nation-state (Volt Typhoon, Andariel, Iranian brute force, Russian SVR).

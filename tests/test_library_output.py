@@ -390,3 +390,129 @@ class TestSelectorStatePersistence:
 
     def test_the_selection_can_be_cleared(self) -> None:
         assert "Clear selection" in self._choose_source()
+
+
+class TestAutoMergeGuard:
+    """The graph builds itself, so the guard against repeat writes is load-bearing.
+
+    Merging writes the graph file and increments its version. Without a guard, a page that
+    reruns on every keystroke would bump the version continuously and manufacture
+    VersionConflicts for anyone else saving at the same time.
+    """
+
+    SOURCE = Path("pages/1_Ingest.py")
+
+    def _source(self) -> str:
+        return self.SOURCE.read_text(encoding="utf-8")
+
+    def test_the_merge_is_guarded_by_a_signature(self) -> None:
+        body = self._source()
+        start = body.index("def auto_merge(")
+        block = body[start : body.index("\ndef ", start + 1)]
+        # The guard must come before the write.
+        assert block.index('st.session_state.get("auto_merged")') < block.index("merge_and_save")
+
+    def test_the_signature_covers_everything_that_changes_the_contribution(self) -> None:
+        """A signature that misses a field would skip a merge that should have happened."""
+        body = self._source()
+        start = body.index("def _merge_signature(")
+        block = body[start : body.index("\ndef ", start + 1)]
+        for field in ("sha256", "model", "prompt_version", "entities", "relationships", "ingested_by"):
+            assert field in block, f"the merge signature ignores {field}"
+
+    def test_a_version_conflict_is_handled_not_raised(self) -> None:
+        """Three retries already happened inside merge_and_save; the user gets a message."""
+        body = self._source()
+        start = body.index("def auto_merge(")
+        block = body[start : body.index("\ndef ", start + 1)]
+        assert "except VersionConflict" in block
+        assert "except StorageError" in block
+
+    def test_the_pipeline_merge_is_no_longer_manual(self) -> None:
+        import re as _re
+
+        body = self._source()
+        assert "render_add_to_graph" not in body
+        # No button whose label is exactly "Add to graph".
+        assert not _re.search(r'st\.button\(\s*"Add to graph"', body)
+
+    def test_agent_results_still_require_an_explicit_click(self) -> None:
+        """Deliberately NOT automatic, unlike the pipeline merge.
+
+        Merging replaces a report's whole contribution, and measurement showed agent runs
+        return nothing in roughly one run of three. Auto-merging agent output would therefore
+        sometimes replace good pipeline entities with an empty result.
+        """
+        assert 'st.button("Add agent findings to graph"' in self._source()
+
+    def test_indicators_alone_still_build_the_graph(self) -> None:
+        """A report with no LLM pass is still worth graphing: regex owns the indicators."""
+        body = self._source()
+        assert "def indicators_only_analysis(" in body
+        start = body.index("def auto_merge(")
+        block = body[start : body.index("\ndef ", start + 1)]
+        assert "indicators_only_analysis(document)" in block
+
+
+class TestIndicatorsOnlyMerge:
+    """Merging a report that has had no LLM analysis must still populate the graph."""
+
+    def test_regex_indicators_become_nodes_without_an_analysis(self, settings) -> None:
+        from extract.llm_extract import ReportAnalysis
+        from graph.merge import merge_report
+        from graph.model import graph_stats, new_graph
+
+        doc = make_doc()
+        iocs = extract_iocs(doc)
+        empty = ReportAnalysis(
+            document_sha256=doc.sha256, model="regex only", prompt_version="n/a"
+        )
+
+        graph = new_graph()
+        merge_report(graph, doc, iocs, empty, mode="indicators-only")
+        stats = graph_stats(graph)
+
+        assert stats["reports"] == 1
+        assert stats["by_type"].get("indicator", 0) == len(iocs.iocs)
+        assert stats["nodes"] > 1
+
+    def test_a_later_analysis_replaces_rather_than_duplicates(self, settings) -> None:
+        """This is what makes merging twice — once for IOCs, once after analysis — safe."""
+        from extract.llm_extract import MergedEntity, ReportAnalysis
+        from graph.merge import merge_report
+        from graph.model import graph_stats, new_graph
+
+        doc = make_doc()
+        iocs = extract_iocs(doc)
+        graph = new_graph()
+
+        merge_report(
+            graph,
+            doc,
+            iocs,
+            ReportAnalysis(document_sha256=doc.sha256, model="regex only", prompt_version="n/a"),
+            mode="indicators-only",
+        )
+        indicators_only = graph_stats(graph)["nodes"]
+
+        merge_report(
+            graph,
+            doc,
+            iocs,
+            ReportAnalysis(
+                document_sha256=doc.sha256,
+                model="claude-haiku-4-5",
+                prompt_version="v1",
+                entities=[
+                    MergedEntity(
+                        name="APT21",
+                        type="threat-actor",
+                        evidence=["APT21 deployed the Akira ransomware against healthcare targets"],
+                    )
+                ],
+            ),
+        )
+        after = graph_stats(graph)
+
+        assert after["reports"] == 1, "the report was duplicated"
+        assert after["nodes"] == indicators_only + 1, "expected exactly the one new entity"

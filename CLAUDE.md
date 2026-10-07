@@ -69,8 +69,11 @@ without rewrites.
 4. LLM extraction: send chunks (prefer the IOC section plus nearby context, not the whole
    report) and request JSON matching the schema below.
 5. Validate (guardrail layer 3): see rules below.
-6. Merge into the graph: normalize names (case, spacing, "APT 21" -> "APT21"),
-   deduplicate so one entity = one node across all reports, keep edges to source reports.
+6. Merge into the graph AUTOMATICALLY as soon as indicators exist, and again once the LLM
+   analysis is available. Normalize names (case, spacing, "APT 21" -> "APT21"), deduplicate so
+   one entity = one node across all reports, keep edges to source reports. Merging is idempotent,
+   which is what makes merging twice safe. Agent findings are the exception and stay manual,
+   because an agent run can return nothing and merging replaces a report's contribution.
 7. Display: clickable graph; selecting a node shows its summary, related nodes,
    and evidence quotes. Show the neighborhood of a selected node, not the whole graph.
 
