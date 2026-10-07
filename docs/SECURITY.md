@@ -117,6 +117,11 @@ HIGH.
   for a model-based classifier such as Prompt Guard, but torch/transformers are deliberately not
   added: they would multiply install size and deployment cold-start for a layer that is not
   carrying the security argument.
+- **The gate fails closed.** If neither password is set, the app refuses to serve rather than
+  opening. This replaced a fail-open default, which is not a hypothetical: the first deployment of
+  this project went live on a public URL with no gate and a working API key, so anyone with the
+  link could have spent the owner's credits. Only the daily caps limited the exposure. Open access
+  now requires `ALLOW_OPEN_ACCESS=true` to be set deliberately.
 - **Session-level lockout only** (Phase 7). Five failed password attempts lock a session, which
   someone can bypass by opening a new one. Accepted for a link shared with a few trusted people,
   and backed by daily caps that bound the damage.

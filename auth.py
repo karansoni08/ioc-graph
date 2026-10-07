@@ -83,8 +83,32 @@ def _locked_remaining() -> int:
 
 def current_role() -> str | None:
     if not access_control_configured():
-        return ROLE_OPEN
+        # Only when open access has been asked for explicitly. Otherwise `require_access`
+        # refuses to serve; see `_render_not_configured`.
+        from config import get_settings
+
+        return ROLE_OPEN if get_settings().allow_open_access else None
     return st.session_state.get(_SESSION_ROLE)
+
+
+def _render_not_configured() -> None:
+    """Shown when no password is set and open access was not explicitly requested.
+
+    This replaced a fail-OPEN default. Previously an app deployed without its secrets served
+    the whole application to anyone with the link, including the buttons that spend API
+    credits — which is exactly what happened on the first deployment of this project. Refusing
+    to serve is the only safe behaviour for a missing gate.
+    """
+    st.title("IOC Graph")
+    st.error(
+        "This app is not configured and will not open.\n\n"
+        "No VIEW_PASSWORD or UPLOAD_PASSWORD is set, so there is nothing protecting it. "
+        "Add both to the app's secrets and reload."
+    )
+    st.caption(
+        "Streamlit Community Cloud: Manage app -> Settings -> Secrets. "
+        "Locally: put them in .env, or set ALLOW_OPEN_ACCESS=true to run without a gate."
+    )
 
 
 def _render_login() -> None:
@@ -137,6 +161,10 @@ def require_access(min_role: str = ROLE_VIEW) -> Access:
     role = current_role()
 
     if role is None:
+        if not access_control_configured():
+            # Misconfiguration, not a failed login. Do not show a form that accepts anything.
+            _render_not_configured()
+            st.stop()
         _render_login()
         st.stop()
 

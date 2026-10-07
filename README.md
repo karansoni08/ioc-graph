@@ -302,7 +302,8 @@ See `.env.example` and `.streamlit/secrets.toml.example`.
 | `AGENT_MAX_INPUT_TOKENS` | `60000` | Hard ceiling on cumulative agent input tokens |
 | `AGENT_MAX_SECONDS` | `120` | Hard wall-clock ceiling per agent run |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | none | Required when `STORAGE_BACKEND=supabase` |
-| `VIEW_PASSWORD` / `UPLOAD_PASSWORD` | none | Access control. **Both unset means the app is open** |
+| `VIEW_PASSWORD` / `UPLOAD_PASSWORD` | none | Access control. **If neither is set the app refuses to start** |
+| `ALLOW_OPEN_ACCESS` | `false` | Run with no gate. Local development only; never set it in a deployment |
 | `DAILY_REPORT_LIMIT` | `20` | Reports per day |
 | `DAILY_AGENT_LIMIT` | `5` | Agent runs per day |
 | `DAILY_SPEND_LIMIT_USD` | `2.00` | Estimated spend per day |

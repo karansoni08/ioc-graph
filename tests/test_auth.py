@@ -148,8 +148,26 @@ class TestAccessRoles:
 
 
 class TestCurrentRole:
-    def test_no_password_configured_means_open(self, no_passwords, st_stub) -> None:
-        assert auth.current_role() == ROLE_OPEN
+    def test_no_password_configured_is_refused_by_default(self, no_passwords, st_stub, monkeypatch) -> None:
+        """Fail CLOSED. A deployment that forgets its secrets must not open to the internet."""
+        monkeypatch.delenv("ALLOW_OPEN_ACCESS", raising=False)
+        import config
+
+        config.get_settings.cache_clear()
+        try:
+            assert auth.current_role() is None
+        finally:
+            config.get_settings.cache_clear()
+
+    def test_open_access_requires_an_explicit_opt_in(self, no_passwords, st_stub, monkeypatch) -> None:
+        monkeypatch.setenv("ALLOW_OPEN_ACCESS", "true")
+        import config
+
+        config.get_settings.cache_clear()
+        try:
+            assert auth.current_role() == ROLE_OPEN
+        finally:
+            config.get_settings.cache_clear()
 
     def test_configured_but_not_signed_in_means_none(self, passwords, st_stub) -> None:
         assert auth.current_role() is None
@@ -188,9 +206,44 @@ class TestGating:
             monkeypatch.setattr(auth, "st", stub)
             assert auth.require_access(minimum).can_upload is True
 
-    def test_open_mode_passes_without_a_login(self, no_passwords, monkeypatch) -> None:
+    def test_unconfigured_app_refuses_to_serve(self, no_passwords, monkeypatch) -> None:
+        """The regression that matters: this app was once deployed publicly with no gate."""
+        monkeypatch.delenv("ALLOW_OPEN_ACCESS", raising=False)
+        import config
+
+        config.get_settings.cache_clear()
         monkeypatch.setattr(auth, "st", make_streamlit_stub())
-        assert auth.require_access(ROLE_UPLOAD).role == ROLE_OPEN
+        try:
+            with pytest.raises(StopCalled):
+                auth.require_access(ROLE_VIEW)
+        finally:
+            config.get_settings.cache_clear()
+
+    def test_unconfigured_app_shows_no_login_form(self, no_passwords, monkeypatch) -> None:
+        """It must not present a form that would accept an empty password."""
+        monkeypatch.delenv("ALLOW_OPEN_ACCESS", raising=False)
+        import config
+
+        config.get_settings.cache_clear()
+        stub = make_streamlit_stub(submitted=True, password="")
+        monkeypatch.setattr(auth, "st", stub)
+        try:
+            with pytest.raises(StopCalled):
+                auth.require_access(ROLE_VIEW)
+            assert auth._SESSION_ROLE not in stub.session_state
+        finally:
+            config.get_settings.cache_clear()
+
+    def test_open_mode_passes_with_the_explicit_opt_in(self, no_passwords, monkeypatch) -> None:
+        monkeypatch.setenv("ALLOW_OPEN_ACCESS", "true")
+        import config
+
+        config.get_settings.cache_clear()
+        monkeypatch.setattr(auth, "st", make_streamlit_stub())
+        try:
+            assert auth.require_access(ROLE_UPLOAD).role == ROLE_OPEN
+        finally:
+            config.get_settings.cache_clear()
 
 
 class TestLoginFlow:

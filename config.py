@@ -108,6 +108,10 @@ class Settings:
     daily_agent_limit: int = 5
     daily_spend_limit_usd: float = 2.00
     app_timezone: str = "America/Toronto"
+    # Running with no password is a local-development convenience and a disaster in a
+    # deployment, so it must be asked for explicitly. Default OFF means a deployment that
+    # forgets to set the passwords refuses to serve rather than opening to the internet.
+    allow_open_access: bool = False
 
     @property
     def max_file_bytes(self) -> int:
@@ -136,6 +140,8 @@ def get_settings() -> Settings:
         daily_agent_limit=_lookup_int("DAILY_AGENT_LIMIT", 5),
         daily_spend_limit_usd=_lookup_float("DAILY_SPEND_LIMIT_USD", 2.00),
         app_timezone=_lookup("APP_TIMEZONE") or "America/Toronto",
+        allow_open_access=(_lookup("ALLOW_OPEN_ACCESS") or "").strip().lower()
+        in ("1", "true", "yes"),
     )
 
 
