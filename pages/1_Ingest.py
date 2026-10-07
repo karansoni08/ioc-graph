@@ -747,7 +747,10 @@ def render_agent_section(
             f"{run.stop_note or 'The agent did not submit findings.'} "
             "The pipeline result above is unchanged."
         )
-        st.page_link("pages/5_Agent_Runs.py", label="See the full trace", icon=":material/timeline:")
+        st.caption(
+            "Every step of this run was saved. Inspect the full trace with: "
+            "python scripts/maintain.py run --id " + run.run_id
+        )
         return
 
     st.caption("Steps")
@@ -827,7 +830,7 @@ def render_save_results(
             return
         st.success(f"Saved to output/{saved.name}")
         st.text("\n".join(f"  {path.name}" for path in saved.files))
-        st.page_link("pages/6_Output.py", label="Open the output folder", icon=":material/folder:")
+        st.page_link("pages/4_Output.py", label="Open the output folder", icon=":material/folder:")
 
 
 def choose_source() -> tuple[str, bytes] | None:

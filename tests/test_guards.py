@@ -690,3 +690,58 @@ class TestRepositoryHygiene:
         actual = {path.name for path in PROJECT_ROOT.glob("*.py")}
         unexpected = actual - expected
         assert unexpected == set(), f"unexpected root modules: {unexpected}"
+
+
+class TestPageSurface:
+    """The app's page set is deliberate, and operator tools live outside it."""
+
+    def test_the_app_exposes_exactly_four_pages(self) -> None:
+        names = sorted(p.name for p in (PROJECT_ROOT / "pages").glob("*.py"))
+        assert names == [
+            "1_Ingest.py",
+            "2_Graph.py",
+            "3_Reports.py",
+            "4_Output.py",
+        ], names
+
+    def test_operator_tools_are_not_pages(self) -> None:
+        """Maintenance and agent traces are occasional operator tasks, not reader pages.
+
+        One of them could also overwrite the shared graph from a button, which is a poor thing to
+        leave in front of everyone holding the app password.
+        """
+        existing = {p.name for p in (PROJECT_ROOT / "pages").glob("*.py")}
+        assert "4_Maintenance.py" not in existing
+        assert "5_Agent_Runs.py" not in existing
+
+    def test_no_page_links_to_a_removed_page(self) -> None:
+        """A dead st.page_link raises at runtime, so this would be a crash, not a cosmetic bug."""
+        import re as _re
+
+        broken: list[str] = []
+        available = {f"pages/{p.name}" for p in (PROJECT_ROOT / "pages").glob("*.py")}
+        for path in [PROJECT_ROOT / "app.py", *(PROJECT_ROOT / "pages").glob("*.py")]:
+            source = path.read_text(encoding="utf-8")
+            for target in _re.findall(r'st\.page_link\(\s*"([^"]+)"', source):
+                if target not in available:
+                    broken.append(f"{path.name} -> {target}")
+        assert broken == [], f"page links to missing pages: {broken}"
+
+    def test_the_maintenance_cli_covers_what_the_pages_did(self) -> None:
+        """Removing the pages must not remove the capability."""
+        source = (PROJECT_ROOT / "scripts" / "maintain.py").read_text(encoding="utf-8")
+        for capability in (
+            "find_possible_duplicates",  # duplicate review
+            "restore_backup",            # backup restore
+            "to_json",                   # graph export
+            "list_runs",                 # agent run listing
+        ):
+            assert capability in source, f"the CLI lost {capability}"
+
+    def test_restoring_a_backup_requires_an_explicit_flag(self) -> None:
+        """It overwrites the shared graph, so it must not happen by typing a command alone."""
+        source = (PROJECT_ROOT / "scripts" / "maintain.py").read_text(encoding="utf-8")
+        start = source.index("def cmd_restore(")
+        block = source[start : source.index("\ndef ", start + 1)]
+        assert "if not args.apply" in block
+        assert "DRY RUN" in block

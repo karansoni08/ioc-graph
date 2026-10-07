@@ -38,7 +38,7 @@ def main() -> None:
         graph, version = store.load()
     except StorageError as exc:
         st.error(f"The stored graph could not be loaded: {exc}")
-        st.caption("Restore a backup from the Maintenance page.")
+        st.caption("Restore a backup with: python scripts/maintain.py restore --version N --apply")
         return
 
     stats = graph_stats(graph)
@@ -95,7 +95,7 @@ def main() -> None:
     with links[2]:
         st.page_link("pages/3_Reports.py", label="Reports", icon=":material/description:")
     with links[3]:
-        st.page_link("pages/4_Maintenance.py", label="Maintenance", icon=":material/build:")
+        st.page_link("pages/4_Output.py", label="Output", icon=":material/folder:")
 
     if not has_api_key():
         st.warning(

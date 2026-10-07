@@ -187,14 +187,14 @@ Run through this after the first deploy and after any redeploy that changes secr
 | 1 | Nothing is visible without a password | Open the URL in a private window | Login form only. No graph, no stats, no page content |
 | 2 | Wrong password is rejected | Enter anything incorrect | "Incorrect password", with a remaining-attempts count |
 | 3 | Lockout works | Get it wrong 5 times | Session locked for 5 minutes, with a countdown |
-| 4 | View role is read-only | Log in with `VIEW_PASSWORD` | Home, Graph, Reports, Agent Runs all work. Ingest and Maintenance are refused. No "Generate summary" button, no "Analyze with Claude", no "Remove from graph" |
+| 4 | The gate holds | Log in with `APP_PASSWORD` | Home, Ingest, Graph, Reports and Output all work. There are no other pages |
 | 5 | Upload role can ingest | Log in with `UPLOAD_PASSWORD`, upload a CISA advisory PDF | Text, indicators, security panel all shown. "Analyze with Claude" appears with a cost estimate |
 | 6 | Analysis and merge work | Click Analyze, then Add to graph | Entities and relationships shown with a validation panel; merge reports node and edge counts |
 | 7 | **Persistence** | Streamlit dashboard → **Reboot app**, then reopen | The report and graph are still there. This is the check that proves Supabase is actually being used |
 | 8 | Daily cap is enforced | Temporarily set `DAILY_REPORT_LIMIT = 1` in Secrets, save, then try a second report | Second attempt is blocked with a message naming the limit and the reset time. **Restore the real value afterwards** |
 | 9 | Concurrency | Two browsers, each upload a different report, click "Add to graph" within a few seconds of each other | Both reports appear in the graph; neither is lost |
 | 10 | Secrets are not exposed | View page source; check the Streamlit logs | No API key, no service-role key, no passwords anywhere |
-| 11 | Agent mode is bounded | Run a deep analysis | Finishes within the budgets; Agent Runs shows every step and a defined status |
+| 11 | Agent mode is bounded | Run a deep analysis | Finishes within the budgets and reports a defined status. `python scripts/maintain.py runs` lists it |
 
 If check 7 fails, the app is still on the local backend: confirm `STORAGE_BACKEND = "supabase"`
 is in the deployed Secrets, not just in your local file.

@@ -220,8 +220,8 @@ with three sources**, not three nodes.
 **Deduplication** happens on a normalized key: `APT 21`, `APT-21` and `apt21` all key to `apt21`;
 CVE ids are case-normalized; an ATT&CK technique is keyed by its id. Normalization only collapses
 *mechanical* differences. It never merges two names because they look similar — similar pairs are
-listed on the Maintenance page for a human to judge, and a real merge is recorded by editing
-`graph/aliases.json`. Automatic fuzzy merging would eventually merge two genuinely different threat
+listed by `python scripts/maintain.py duplicates` for a human to judge, and a real merge is
+recorded by editing `graph/aliases.json`. Automatic fuzzy merging would eventually merge two genuinely different threat
 actors, which is a worse failure than a duplicate node.
 
 **The view is always a neighborhood**, never the whole graph, because past a few hundred nodes a
@@ -289,6 +289,27 @@ Those files carry **real refanged indicator values**, unlike the UI which always
 they exist to feed other tools. Each folder says so in its README, because a CSV of live
 indicators is easy to open without realising what it is. The Output page lists saved results,
 previews them and offers per-file or zipped download.
+
+## Operator tools
+
+The app itself is four pages — Ingest, Graph, Reports, Output — because that is what a reader
+needs. Reviewing duplicates, restoring a backup and reading an agent trace are occasional
+operator tasks, and one of them can overwrite the shared graph, which is a poor thing to leave
+behind a button in front of everyone holding the app password. They live in a CLI instead:
+
+```bash
+python scripts/maintain.py stats                    # graph size, types, ingested reports
+python scripts/maintain.py duplicates --threshold 90
+python scripts/maintain.py export --out graph.json
+python scripts/maintain.py backups
+python scripts/maintain.py restore --version 3 --apply   # dry run without --apply
+python scripts/maintain.py runs                     # agent runs, newest first
+python scripts/maintain.py run --id <run_id>        # one run's full trace
+```
+
+`restore` is a dry run unless you pass `--apply`, and restoring writes the backup as a *new*
+version rather than rewinding the counter, so anyone holding the old version still gets a
+conflict instead of silently overwriting the restore.
 
 ## Local setup
 
@@ -382,7 +403,8 @@ guards/             The four guardrail layers
 agent/              Bounded agent mode: ATT&CK data, read-only tools, the loop
 graph/              Graph model, normalization, idempotent merge, summaries
 storage/            GraphStore interface, local JSON and Supabase backends
-pages/              Ingest, Graph, Reports, Maintenance, Agent Runs, Output
+pages/              Ingest, Graph, Reports, Output (the whole app surface)
+scripts/maintain.py Operator tools: duplicates, export, backups, restore, agent traces
 library/manifest.json  The 10-report library (PDFs fetched on demand, not committed)
 supabase/schema.sql Tables, RPC functions and the RLS configuration
 scripts/            Fixture download, ground truth, evaluation, migration
