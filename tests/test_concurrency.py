@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import config
 from config import SECRET_VARS, Settings
 from extract.iocs import extract_iocs
 from extract.llm_extract import MergedEntity, ReportAnalysis
@@ -410,3 +411,51 @@ class TestSchemaFile:
         schema = self._schema()
         reserve_body = schema.split("function reserve_usage")[1]
         assert "for update" in reserve_body
+
+
+class TestConfigSourceLayering:
+    """`config._lookup` reads the environment first, then st.secrets.
+
+    These tests exist because the layering was previously untested, and the gap let a real local
+    secrets file silently change the behaviour of eight other tests.
+    """
+
+    def test_environment_wins_over_secrets(self, monkeypatch, streamlit_secrets) -> None:
+        monkeypatch.setenv("ANTHROPIC_MODEL", "from-environment")
+        streamlit_secrets({"ANTHROPIC_MODEL": "from-secrets"})
+        assert config._lookup("ANTHROPIC_MODEL") == "from-environment"
+
+    def test_secrets_are_used_when_the_environment_is_unset(
+        self, monkeypatch, streamlit_secrets
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        streamlit_secrets({"ANTHROPIC_MODEL": "from-secrets"})
+        assert config._lookup("ANTHROPIC_MODEL") == "from-secrets"
+
+    def test_absent_in_both_sources_is_none(self, monkeypatch, streamlit_secrets) -> None:
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        streamlit_secrets({})
+        assert config._lookup("ANTHROPIC_MODEL") is None
+
+    def test_a_blank_environment_value_falls_through_to_secrets(
+        self, monkeypatch, streamlit_secrets
+    ) -> None:
+        """Whitespace is not a configured value; it must not mask the secrets source."""
+        monkeypatch.setenv("ANTHROPIC_MODEL", "   ")
+        streamlit_secrets({"ANTHROPIC_MODEL": "from-secrets"})
+        assert config._lookup("ANTHROPIC_MODEL") == "from-secrets"
+
+    def test_passwords_can_come_from_secrets_alone(
+        self, monkeypatch, streamlit_secrets
+    ) -> None:
+        """This is how the deployed app is configured: secrets only, no .env."""
+        monkeypatch.delenv("VIEW_PASSWORD", raising=False)
+        monkeypatch.delenv("UPLOAD_PASSWORD", raising=False)
+        streamlit_secrets({"VIEW_PASSWORD": "v", "UPLOAD_PASSWORD": "u"})
+        assert config.get_view_password() == "v"
+        assert config.access_control_configured() is True
+
+    @pytest.mark.use_real_streamlit_secrets
+    def test_secrets_lookup_never_raises_outside_streamlit(self) -> None:
+        """Outside a Streamlit run st.secrets raises; config must return None, not crash."""
+        assert config._from_streamlit_secrets("DEFINITELY_NOT_SET_ANYWHERE") is None
