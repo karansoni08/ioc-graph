@@ -13,8 +13,28 @@ untrusted component, and so is its output.* Everything in the design follows fro
 > **Status: v1.0, all 7 phases complete.** Deployed access is by invitation — it is one shared
 > workspace behind a password, running on the author's API key. The repository is private.
 
-**Screenshot placeholder** — add `docs/images/graph-explorer.png` (the graph explorer with a node
-selected) and `docs/images/agent-trace.png` (the agent run timeline).
+### The graph explorer
+
+![Graph explorer](docs/images/03-graph-explorer.png)
+
+Three CISA advisories merged into one graph: 486 nodes, 553 edges. Entity type by colour and
+shape, relationship labels on the edges, and indicators shown defanged (`hxxp://jirostrogud[.]com`)
+so nothing on the canvas is a working link. Filters on the left control entity type, neighborhood
+depth, node count, and whether an item was found by the pipeline or by agent mode.
+
+### Home
+
+![Home](docs/images/02-home.png)
+
+Graph statistics, nodes by type, and recent reports with who ingested them and what each cost. The
+sidebar carries the role badge and today's usage against the daily caps.
+
+### The access gate
+
+![Login](docs/images/01-login-gate.png)
+
+Nothing is visible without a password — verified: no node counts, graph version or entity names
+appear before login, and a direct URL to any page returns this gate.
 
 ---
 
