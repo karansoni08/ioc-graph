@@ -1,0 +1,116 @@
+{
+  "name": "Report library",
+  "description": "Public threat intelligence advisories available for one-click ingestion. All are published by CISA and are US Government works in the public domain. They are NOT committed to this repository: the PDFs are fetched on first use and cached, which keeps the repo small and avoids redistributing several megabytes of third-party files.",
+  "reports": [
+    {
+      "id": "aa24-109a",
+      "title": "Akira Ransomware",
+      "category": "ransomware",
+      "publisher": "CISA",
+      "advisory_id": "AA24-109A",
+      "description": "Akira has hit over 250 organisations and claimed ~$42M in proceeds. Rich hash tables, a long tool list (Mimikatz, AnyDesk, RClone) and 8 exploited CVEs.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-109a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2025-12/aa24-109a-stopransomware-akira-ransomware.pdf",
+      "filename": "aa24-109a.pdf"
+    },
+    {
+      "id": "aa24-131a",
+      "title": "Black Basta Ransomware",
+      "category": "ransomware",
+      "publisher": "CISA",
+      "advisory_id": "AA24-131A",
+      "description": "Ransomware-as-a-service affecting 500+ organisations across critical infrastructure, including healthcare.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-131a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2024-11/aa24-131a-joint-csa-stopransomware-black-basta_3.pdf",
+      "filename": "aa24-131a.pdf"
+    },
+    {
+      "id": "aa24-242a",
+      "title": "RansomHub Ransomware",
+      "category": "ransomware",
+      "publisher": "CISA",
+      "advisory_id": "AA24-242A",
+      "description": "RaaS formerly Cyclops and Knight. Over 110 published URLs, making it the best fixture for URL extraction.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-242a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2024-09/aa24-242a-stopransomware-ransomhub-ransomware_1.pdf",
+      "filename": "aa24-242a.pdf"
+    },
+    {
+      "id": "aa23-158a",
+      "title": "CL0P Ransomware \u2014 MOVEit Exploitation",
+      "category": "ransomware",
+      "publisher": "CISA",
+      "advisory_id": "AA23-158A",
+      "description": "CL0P's mass exploitation of CVE-2023-34362 in MOVEit Transfer. Heavy on hashes, domains and web shells.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-158a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2023-07/aa23-158a-stopransomware-cl0p-ransomware-gang-exploits-moveit-vulnerability_8.pdf",
+      "filename": "aa23-158a.pdf"
+    },
+    {
+      "id": "aa25-071a",
+      "title": "Medusa Ransomware",
+      "category": "ransomware",
+      "publisher": "CISA",
+      "advisory_id": "AA25-071A",
+      "description": "Double-extortion RaaS affecting 300+ critical infrastructure victims.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa25-071a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2026-08/aa25-071a-stopransomware-medusa-ransomware-508c.pdf",
+      "filename": "aa25-071a.pdf"
+    },
+    {
+      "id": "aa23-325a",
+      "title": "LockBit 3.0 \u2014 Citrix Bleed",
+      "category": "ransomware",
+      "publisher": "CISA",
+      "advisory_id": "AA23-325A",
+      "description": "LockBit affiliates exploiting CVE-2023-4966 (Citrix Bleed) to hijack sessions and bypass MFA.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-325a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2023-11/aa23-325a_lockbit_3.0_ransomware_affiliates_exploit_cve-2023-4966_citrix_bleed_vulnerability_0.pdf",
+      "filename": "aa23-325a.pdf"
+    },
+    {
+      "id": "aa24-038a",
+      "title": "Volt Typhoon \u2014 PRC State-Sponsored",
+      "category": "nation-state",
+      "publisher": "CISA",
+      "advisory_id": "AA24-038A",
+      "description": "PRC actors pre-positioning in US critical infrastructure using living-off-the-land techniques. Long, behaviour-heavy prose rather than IOC tables.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-038a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2024-03/aa24-038a_csa_prc_state_sponsored_actors_compromise_us_critical_infrastructure_3.pdf",
+      "filename": "aa24-038a.pdf"
+    },
+    {
+      "id": "aa24-207a",
+      "title": "Andariel \u2014 North Korean Espionage",
+      "category": "nation-state",
+      "publisher": "CISA",
+      "advisory_id": "AA24-207A",
+      "description": "DPRK group targeting defence, aerospace and nuclear sectors for military and nuclear intelligence.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-207a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2024-08/aa24-207a-dprk-cyber-group-conducts-global-espionage-campaign_0.pdf",
+      "filename": "aa24-207a.pdf"
+    },
+    {
+      "id": "aa24-290a",
+      "title": "Iranian Brute Force and Credential Access",
+      "category": "nation-state",
+      "publisher": "CISA",
+      "advisory_id": "AA24-290A",
+      "description": "Iranian actors using brute force and MFA push-bombing against healthcare, energy and government.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-290a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2024-10/aa24-290a-iranian-cyber-actors-conduct-brute-force-and-credential-access-activity.pdf",
+      "filename": "aa24-290a.pdf"
+    },
+    {
+      "id": "aa23-347a",
+      "title": "Russian SVR \u2014 JetBrains TeamCity",
+      "category": "nation-state",
+      "publisher": "CISA",
+      "advisory_id": "AA23-347A",
+      "description": "SVR (APT29 / Cozy Bear) exploiting CVE-2023-42793 in JetBrains TeamCity for supply-chain access.",
+      "source_page": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-347a",
+      "pdf_url": "https://www.cisa.gov/sites/default/files/2023-12/aa23-347a-russian-foreign-intelligence-service-svr-exploiting-jetbrains-teamcity-cve-globally_0.pdf",
+      "filename": "aa23-347a.pdf"
+    }
+  ]
+}

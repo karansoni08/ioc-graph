@@ -528,10 +528,19 @@ class TestRenderingAudit:
                 offenders.append(f"{path.name}:{line}")
         assert offenders == [], f"st.markdown/st.write found at {offenders}"
 
-    def test_no_code_fetches_extracted_urls(self) -> None:
+    # Modules permitted to make outbound requests, each for a reviewed reason. Anything else
+    # fetching a URL is a bug: the rule is that nothing may request a URL that came out of a
+    # report, because report URLs are attacker-chosen.
+    ALLOWED_FETCHERS = {
+        # Downloads library PDFs from a committed manifest, restricted to publisher hosts.
+        "ingest/library.py",
+    }
+
+    def test_no_unreviewed_code_fetches_urls(self) -> None:
         """Nothing may request a URL found in a report.
 
-        `scripts/fetch_fixtures.py` makes requests, but only to URLs hardcoded in that file.
+        `scripts/` is excluded entirely — those are developer tools, not app code, and they
+        fetch only hardcoded URLs.
         """
         source_dirs = ["extract", "graph", "guards", "llm", "ingest", "storage", "agent", "pages"]
         offenders: list[str] = []
@@ -539,8 +548,19 @@ class TestRenderingAudit:
             for path in (PROJECT_ROOT / directory).rglob("*.py"):
                 source = path.read_text(encoding="utf-8")
                 if re.search(r"\b(requests\.(get|post)|urlopen|httpx\.(get|post))\s*\(", source):
-                    offenders.append(str(path.relative_to(PROJECT_ROOT)))
-        assert offenders == [], f"outbound HTTP calls in {offenders}"
+                    relative = str(path.relative_to(PROJECT_ROOT))
+                    if relative not in self.ALLOWED_FETCHERS:
+                        offenders.append(relative)
+        assert offenders == [], f"unreviewed outbound HTTP calls in {offenders}"
+
+    def test_the_only_fetcher_restricts_itself_to_an_allowlist(self) -> None:
+        """The exemption above is only safe because the fetch is host-restricted."""
+        from ingest.library import ALLOWED_HOSTS
+
+        assert ALLOWED_HOSTS, "the library fetcher has no host allowlist"
+        source = (PROJECT_ROOT / "ingest" / "library.py").read_text(encoding="utf-8")
+        # The check must happen before the request, not after.
+        assert source.index("_assert_allowed_url(report.pdf_url)") < source.index("requests.get")
 
 
 class TestOutputValidationHardening:

@@ -28,6 +28,13 @@ from agent.attack_data import ensure_available as ensure_attack_available
 from agent.loop import run_agent
 from graph.persist import merge_and_save
 from ingest.errors import IngestError
+from ingest.library import (
+    cached_count,
+    categories,
+    fetch_report,
+    is_cached,
+    load_manifest,
+)
 from ingest.loader import load_document
 from ingest.models import Document
 from llm.base import LLMError
@@ -36,6 +43,7 @@ from llm.pricing import estimate_cost, format_cost, is_known_model
 from storage.base import StorageError, VersionConflict
 from usage import KIND_AGENT, KIND_REPORT, limit_message, reserve, settle
 from storage.factory import get_store
+from storage.output import save_results
 from storage.local import LocalGraphStore
 
 st.set_page_config(page_title="Ingest — IOC Graph", layout="wide")
@@ -715,6 +723,115 @@ def render_agent_section(
         st.page_link("pages/2_Graph.py", label="Explore the graph", icon=":material/hub:")
 
 
+def render_save_results(
+    document: Document, extraction: IOCExtraction, analysis: ReportAnalysis | None
+) -> None:
+    """Write a result folder to the output directory.
+
+    Separate from "Add to graph": the graph is one merged artifact, whereas this produces plain
+    files you can open in a spreadsheet or attach to a ticket.
+    """
+    st.divider()
+    st.subheader("Save results")
+    st.caption(
+        "Writes a folder of CSV and JSON files for this report under the output directory. "
+        "Those files contain REAL indicator values, not the defanged display form, so they can "
+        "feed other tools."
+    )
+
+    if st.button("Save results to output folder", key="save_output"):
+        try:
+            saved = save_results(document, extraction, analysis, settings)
+        except OSError as exc:
+            st.error(f"Could not write the results: {exc}")
+            return
+        st.success(f"Saved to output/{saved.name}")
+        st.text("\n".join(f"  {path.name}" for path in saved.files))
+        st.page_link("pages/6_Output.py", label="Open the output folder", icon=":material/folder:")
+
+
+def choose_source() -> tuple[str, bytes] | None:
+    """Pick a report: upload your own, or take one from the library.
+
+    Returns (filename, bytes) or None while nothing is chosen. Library reports go through
+    exactly the same ingestion path as uploads — including sanitization — because a published
+    advisory is still a document from the internet.
+    """
+    upload_tab, library_tab = st.tabs(["Upload a report", "Report library"])
+
+    with upload_tab:
+        upload = st.file_uploader(
+            "PDF or HTML threat report",
+            type=["pdf", "html", "htm"],
+            accept_multiple_files=False,
+        )
+        if upload is not None:
+            return upload.name, upload.getvalue()
+
+    with library_tab:
+        reports = load_manifest()
+        if not reports:
+            st.warning("The report library manifest is missing or unreadable.")
+            return None
+
+        st.caption(
+            f"{len(reports)} public advisories published by CISA, in the public domain. "
+            f"{cached_count(settings)} already downloaded. "
+            "They are fetched from the publisher on first use and cached, so the first open of "
+            "a report takes a few seconds."
+        )
+
+        chosen_categories = st.multiselect(
+            "Filter by category", options=categories(), default=categories()
+        )
+        visible = [r for r in reports if r.category in chosen_categories]
+        if not visible:
+            st.caption("No reports match the filter.")
+            return None
+
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "advisory": r.advisory_id,
+                        "title": r.title,
+                        "category": r.category,
+                        "downloaded": "yes" if is_cached(r, settings) else "no",
+                    }
+                    for r in visible
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        labels = {r.label: r for r in visible}
+        chosen = st.selectbox("Report", options=["(none)"] + list(labels))
+        if chosen == "(none)":
+            return None
+
+        report = labels[chosen]
+        st.text(report.description)
+        st.caption(f"Source: {report.source_page}")
+
+        if not st.button("Load this report", type="primary", key="load_library"):
+            return None
+
+        try:
+            with st.spinner(f"Fetching {report.advisory_id} from {report.publisher}…"):
+                data = fetch_report(report, settings)
+        except IngestError as exc:
+            st.error(str(exc))
+            return None
+
+        # Survives the rerun that Streamlit performs after the button click.
+        st.session_state["library_choice"] = (report.filename, data)
+
+    if "library_choice" in st.session_state:
+        return st.session_state["library_choice"]
+    return None
+
+
 def main() -> None:
     require_access()
 
@@ -730,20 +847,15 @@ def main() -> None:
         "and every claim is checked against the report before it is kept."
     )
 
-    upload = st.file_uploader(
-        "PDF or HTML threat report",
-        type=["pdf", "html", "htm"],
-        accept_multiple_files=False,
-    )
-
-    if upload is None:
-        st.caption("Waiting for a file.")
+    chosen = choose_source()
+    if chosen is None:
+        st.caption("Upload a report, or pick one from the library.")
         return
 
-    data = upload.getvalue()
+    filename, data = chosen
 
     try:
-        document = parse_upload(f"{upload.name}:{len(data)}", upload.name, data)
+        document = parse_upload(f"{filename}:{len(data)}", filename, data)
     except IngestError as exc:
         st.error(str(exc))
         return
@@ -754,7 +866,7 @@ def main() -> None:
     columns[2].metric("Characters", f"{document.char_count:,}")
     columns[3].metric("Tables", document.table_count)
 
-    st.caption("SHA-256 of the uploaded file")
+    st.caption("SHA-256 of the report")
     st.code(document.sha256, language=None)
 
     st.divider()
@@ -766,6 +878,8 @@ def main() -> None:
     st.divider()
     extraction = extract_indicators(document.sha256, document)
     render_iocs(document, extraction)
+
+    render_save_results(document, extraction, load_cached(document.sha256, settings.anthropic_model, settings))
 
     st.divider()
     render_llm_section(document, extraction)

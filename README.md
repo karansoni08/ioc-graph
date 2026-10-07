@@ -238,6 +238,43 @@ backups. Saves use an optimistic version number: if the stored version changed s
 is rejected and the app reloads and re-merges onto the newer graph rather than overwriting someone
 else's upload. Merging is idempotent, which is what makes that retry safe.
 
+## Report library and output
+
+**Ingesting.** Two ways: upload your own PDF or HTML, or pick from a built-in library of **10
+public CISA advisories** — six ransomware (Akira, Black Basta, RansomHub, CL0P/MOVEit, Medusa,
+LockBit 3.0) and four nation-state (Volt Typhoon, Andariel, Iranian brute force, Russian SVR).
+They are US Government works in the public domain.
+
+The PDFs are **not committed**. `library/manifest.json` is, and the files are fetched from the
+publisher on first use and cached under `data/library/`. That keeps roughly 8 MB of third-party
+files out of a public repo and avoids weakening the 1 MB large-file commit guard, at the cost of
+one slow click the first time a given report is opened. A library report goes through exactly the
+same ingestion path as an upload, sanitization included: a published advisory is still a document
+from the internet.
+
+The fetcher is restricted to an **allowlist of publisher hosts**. The manifest is a committed file
+in a public repository, so a pull request could propose any URL; host restriction means an
+accepted malicious edit still cannot make the app fetch cloud metadata, internal addresses or
+arbitrary hosts. It is the only module in the app that makes an outbound request, and a test
+enforces that.
+
+**Output.** "Save results to output folder" writes a folder per report under `data/output/`:
+
+```text
+output/<report>_<sha12>/
+  iocs.csv           every indicator with type, page, flags and original spelling
+  entities.csv       threat entities that survived validation
+  relationships.csv  relationships between them
+  analysis.json      the complete result, including what was dropped and why
+  summary.txt        a short human-readable overview
+  README.txt         a warning that these values are real
+```
+
+Those files carry **real refanged indicator values**, unlike the UI which always defangs them —
+they exist to feed other tools. Each folder says so in its README, because a CSV of live
+indicators is easy to open without realising what it is. The Output page lists saved results,
+previews them and offers per-file or zipped download.
+
 ## Local setup
 
 Requires Python 3.11+.
@@ -330,7 +367,8 @@ guards/             The four guardrail layers
 agent/              Bounded agent mode: ATT&CK data, read-only tools, the loop
 graph/              Graph model, normalization, idempotent merge, summaries
 storage/            GraphStore interface, local JSON and Supabase backends
-pages/              Ingest, Graph, Reports, Maintenance, Agent Runs
+pages/              Ingest, Graph, Reports, Maintenance, Agent Runs, Output
+library/manifest.json  The 10-report library (PDFs fetched on demand, not committed)
 supabase/schema.sql Tables, RPC functions and the RLS configuration
 scripts/            Fixture download, ground truth, evaluation, migration
 tests/              388 tests including the poisoned corpus
