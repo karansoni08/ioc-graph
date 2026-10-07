@@ -13,6 +13,7 @@ from agent.loop import (
     STATUS_ERROR,
     STATUS_NO_SUBMISSION,
     STATUS_SUBMITTED,
+    STATUS_SUBMITTED_EMPTY,
     build_first_message,
     run_agent,
 )
@@ -518,8 +519,13 @@ class TestAgentValidation:
         bad = dict(GOOD_ENTITY, evidence="This sentence does not appear in the report at all.")
         script = [FakeResponse(content=[submit_block([bad])])]
         run = run_agent(doc, iocs, pipeline, snapshot, FakeClient(script), SETTINGS)
-        assert run.analysis.entities == []
+
         assert run.validation.counts_by_reason().get("not_grounded") == 1
+        # Nothing survived, so the run is reported as empty and the pipeline result is kept
+        # rather than being replaced by nothing.
+        assert run.status == STATUS_SUBMITTED_EMPTY
+        assert run.analysis is pipeline
+        assert "Akira" not in {entity.name for entity in run.analysis.entities}
 
     def test_invented_indicator_is_dropped(self, doc, iocs, pipeline, snapshot) -> None:
         bad = {
@@ -531,8 +537,11 @@ class TestAgentValidation:
         }
         script = [FakeResponse(content=[submit_block([bad])])]
         run = run_agent(doc, iocs, pipeline, snapshot, FakeClient(script), SETTINGS)
-        assert run.analysis.entities == []
+
         assert run.validation.counts_by_reason().get("unknown_indicator") == 1
+        assert run.status == STATUS_SUBMITTED_EMPTY
+        # The invented indicator must not reach the retained result either.
+        assert "203.0.113.200" not in {e.name for e in run.analysis.entities}
 
     @needs_attack
     def test_real_attack_id_is_kept_with_the_dataset_name(self, doc, iocs, pipeline, snapshot) -> None:
@@ -765,3 +774,21 @@ class TestSubmissionRobustness:
         run = run_agent(doc, iocs, pipeline, snapshot, FakeClient([parallel]), settings)
         assert len(run.steps) == 4
         assert any("budget is exhausted" in step.result_preview for step in run.steps)
+
+
+class TestEmptySubmission:
+    def test_empty_submission_keeps_the_pipeline_result(self, doc, iocs, pipeline, snapshot) -> None:
+        """Measured at 3 of 9 live runs, so this path must not discard the pipeline's work."""
+        script = [FakeResponse(content=[submit_block([], [], [])])]
+        run = run_agent(doc, iocs, pipeline, snapshot, FakeClient(script), SETTINGS)
+
+        assert run.status == STATUS_SUBMITTED_EMPTY
+        assert run.analysis is pipeline
+        assert run.analysis.entities, "the pipeline result was lost"
+        assert "empty" in run.stop_note.lower()
+
+    def test_a_real_submission_still_reports_submitted(self, doc, iocs, pipeline, snapshot) -> None:
+        script = [FakeResponse(content=[submit_block([GOOD_ENTITY])])]
+        run = run_agent(doc, iocs, pipeline, snapshot, FakeClient(script), SETTINGS)
+        assert run.status == STATUS_SUBMITTED
+        assert run.analysis is not pipeline

@@ -47,6 +47,11 @@ from .tools import (
 )
 
 STATUS_SUBMITTED = "submitted"
+# A submission that validated but contained nothing. Distinguished from `submitted` because
+# measurement showed it is common (3 of 9 runs) and reporting it as success is misleading: the
+# run cost money and produced no findings. The pipeline result is retained in this case, exactly
+# as for no_submission, so an empty agent result never displaces work the pipeline already did.
+STATUS_SUBMITTED_EMPTY = "submitted_empty"
 STATUS_NO_SUBMISSION = "no_submission"
 STATUS_ERROR = "error"
 
@@ -571,6 +576,16 @@ def run_agent(
                     evidence=[pattern["evidence"]],
                 )
             )
+
+    if not agent_analysis.entities and not agent_analysis.relationships:
+        # Validated, but empty. Keep the pipeline's findings rather than replacing them with
+        # nothing, and report the outcome honestly.
+        run.status = STATUS_SUBMITTED_EMPTY
+        run.stop_note = (
+            "The agent submitted an empty result, so the pipeline result was kept unchanged."
+        )
+        run.analysis = pipeline_analysis
+        return run
 
     run.analysis = agent_analysis
     run.diff = _compute_diff(pipeline_analysis, agent_analysis, run.attack_patterns)

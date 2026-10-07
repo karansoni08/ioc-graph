@@ -21,6 +21,10 @@ settings = get_settings()
 
 STATUS_HELP = {
     "submitted": "The agent called submit_findings and its output was validated.",
+    "submitted_empty": (
+        "The agent submitted a result that validated but contained nothing, so the pipeline "
+        "result was kept. Measured at 3 of 9 runs, so it is a normal outcome rather than a fault."
+    ),
     "no_submission": (
         "The agent never called submit_findings, so the pipeline result was kept unchanged. "
         "This is a defined outcome, not a failure of the app."
@@ -81,7 +85,7 @@ def main() -> None:
     note = STATUS_HELP.get(status, "")
     if status == "submitted":
         st.success(f"Status: {status}. {note}")
-    elif status == "no_submission":
+    elif status in ("no_submission", "submitted_empty"):
         st.warning(f"Status: {status}. {note}")
     else:
         st.error(f"Status: {status}. {note}")

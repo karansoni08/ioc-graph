@@ -1,0 +1,107 @@
+{
+  "aa24-109a-akira": [
+    {
+      "status": "submitted",
+      "tool_calls": 6,
+      "entities": 0,
+      "relationships": 0,
+      "attack_found": 0,
+      "attack_tp": 0,
+      "attack_recall": 0.0,
+      "cost": 0.0531,
+      "seconds": 39.1
+    },
+    {
+      "status": "submitted",
+      "tool_calls": 8,
+      "entities": 12,
+      "relationships": 0,
+      "attack_found": 0,
+      "attack_tp": 0,
+      "attack_recall": 0.0,
+      "cost": 0.0566,
+      "seconds": 39.3
+    },
+    {
+      "status": "submitted",
+      "tool_calls": 6,
+      "entities": 0,
+      "relationships": 0,
+      "attack_found": 0,
+      "attack_tp": 0,
+      "attack_recall": 0.0,
+      "cost": 0.0527,
+      "seconds": 36.9
+    }
+  ],
+  "aa23-158a-cl0p-moveit": [
+    {
+      "status": "submitted",
+      "tool_calls": 8,
+      "entities": 27,
+      "relationships": 25,
+      "attack_found": 14,
+      "attack_tp": 14,
+      "attack_recall": 0.824,
+      "cost": 0.0531,
+      "seconds": 37.5
+    },
+    {
+      "status": "submitted",
+      "tool_calls": 7,
+      "entities": 23,
+      "relationships": 21,
+      "attack_found": 11,
+      "attack_tp": 11,
+      "attack_recall": 0.647,
+      "cost": 0.0427,
+      "seconds": 32.2
+    },
+    {
+      "status": "submitted",
+      "tool_calls": 7,
+      "entities": 17,
+      "relationships": 14,
+      "attack_found": 0,
+      "attack_tp": 0,
+      "attack_recall": 0.0,
+      "cost": 0.0465,
+      "seconds": 37.8
+    }
+  ],
+  "aa24-242a-ransomhub": [
+    {
+      "status": "submitted",
+      "tool_calls": 8,
+      "entities": 0,
+      "relationships": 0,
+      "attack_found": 0,
+      "attack_tp": 0,
+      "attack_recall": 0.0,
+      "cost": 0.0569,
+      "seconds": 40.3
+    },
+    {
+      "status": "submitted",
+      "tool_calls": 7,
+      "entities": 17,
+      "relationships": 0,
+      "attack_found": 0,
+      "attack_tp": 0,
+      "attack_recall": 0.0,
+      "cost": 0.051,
+      "seconds": 38.4
+    },
+    {
+      "status": "submitted",
+      "tool_calls": 7,
+      "entities": 19,
+      "relationships": 4,
+      "attack_found": 4,
+      "attack_tp": 4,
+      "attack_recall": 0.182,
+      "cost": 0.0552,
+      "seconds": 37.7
+    }
+  ]
+}

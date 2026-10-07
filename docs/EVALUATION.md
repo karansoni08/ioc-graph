@@ -324,7 +324,47 @@ reliable is a prompt and model question — more capable models would likely rem
 variance — and should be measured over several runs per fixture rather than one, which is this
 evaluation's main methodological weakness.
 
-**Caveat on these numbers.** One run per fixture. Agent runs are non-deterministic and the
-run-to-run spread observed while developing was large: the same RansomHub fixture produced
-`submitted` with an empty result, then `no_submission`, on consecutive runs. Treat the table as an
-illustration of behaviour and spread, not as a precise measurement.
+### Measured variance: 3 runs per fixture
+
+The single-run table above cannot say anything reliable about a non-deterministic loop, so the
+spread was measured directly: `scripts/agent_variance.py`, 3 runs per fixture, 9 runs, **$0.47
+total**. Same model, same budgets, same inputs. Raw data in `docs/results/agent_variance.json`.
+
+| Fixture | Statuses | ATT&CK recall (min / mean / max) | Entities per run | Relationships per run |
+| --- | --- | --- | --- | --- |
+| Akira | submitted ×3 | 0.000 / 0.000 / 0.000 | 0, 12, 0 | 0, 0, 0 |
+| CL0P / MOVEit | submitted ×3 | **0.000 / 0.490 / 0.824** | 27, 23, 17 | 25, 21, 14 |
+| RansomHub | submitted ×3 | 0.000 / 0.061 / 0.182 | 0, 17, 19 | 0, 0, 4 |
+
+Cost was stable at $0.04–$0.06 per run. Three findings:
+
+**The submission fix holds.** All 9 runs reached `submitted`. Before it, all three fixtures ended
+`no_submission` and ATT&CK recall was 0 everywhere. That single plumbing bug was responsible for
+the entire apparent failure of agent mode.
+
+**The variance is severe, and it is the dominant effect.** On CL0P, ATT&CK recall ranged from
+**0.000 to 0.824 across three identical invocations** — from total failure to the best result in
+the whole evaluation. Any conclusion drawn from one run of this agent would have been noise. This
+is the single most important thing the evaluation establishes, and it is why the earlier one-run
+table should not be read as a measurement.
+
+**Empty submissions are common, not exceptional.** Three of nine runs submitted zero entities
+(Akira runs 1 and 3, RansomHub run 1). They validated correctly and reported `submitted`, which
+read as success for a run that cost money and produced nothing. That was a reporting defect, now
+fixed: an empty submission reports the distinct status `submitted_empty` and **retains the pipeline
+result**, so a vacuous agent result can never displace work the pipeline already did.
+
+**Akira never produces an ATT&CK mapping** — 0 of 53 in all three runs, despite having the richest
+ground truth of the three. The likely cause is that its pipeline result is already dense, so the
+agent spends its budget on entity work; the first user message hands it the IOC-section pages,
+which are hash tables rather than behavioural prose. Feeding the agent a behaviour-rich chunk
+instead of the IOC section would be the thing to try, and is a concrete next step rather than a
+mystery.
+
+**Revised recommendation.** Keep the pipeline as the default and agent mode opt-in, unchanged. But
+the measured variance means agent mode should not be presented as an improvement — it is a
+*sometimes* improvement, with roughly a one-in-three chance of returning nothing on this model at
+this budget. For the ATT&CK mapping it is still the only option, since the pipeline scores 0
+everywhere. The honest framing is: worth running when you specifically want ATT&CK coverage and are
+willing to re-run it, not worth running automatically. A more capable model is the most likely fix
+for the variance, and `ANTHROPIC_AGENT_MODEL` already exists to test exactly that.

@@ -156,6 +156,12 @@ dataset rather than the model, so the graph cannot hold a real-looking id with a
 Tool results are nonce-wrapped and injection-scanned, since `search_report` returns report text and
 is exactly as hostile as the report.
 
+**Measured honestly:** across 9 runs (3 per fixture), ATT&CK recall on one advisory ranged from
+**0.000 to 0.824 for identical inputs**, and 3 of 9 runs submitted nothing at all. Agent mode is a
+*sometimes* improvement, not a reliable one, which is why it stays opt-in and why an empty
+submission retains the pipeline result rather than replacing it. Numbers and interpretation:
+[docs/EVALUATION.md](docs/EVALUATION.md).
+
 ## How IOC extraction works
 
 Entirely deterministic: regular expressions, no model, no network. The same report always yields
