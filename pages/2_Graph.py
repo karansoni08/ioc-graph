@@ -39,24 +39,99 @@ settings = get_settings()
 
 # Colour and shape per type, with a legend. Consistent across the app so a shape means one
 # thing everywhere.
-TYPE_STYLE: dict[str, tuple[str, str]] = {
-    "threat-actor": ("#d94f4f", "diamond"),
-    "malware": ("#e07b39", "dot"),
-    "tool": ("#e0c339", "dot"),
-    "vulnerability": ("#9b59b6", "triangle"),
-    "indicator": ("#3d8bcd", "square"),
-    "attack-pattern": ("#2fa98c", "triangleDown"),
-    "campaign": ("#c2578f", "star"),
-    "infrastructure": ("#7d8a99", "hexagon"),
-    "report": ("#5a6472", "square"),
+# Colour families, not one hue per type.
+#
+# A node-link canvas is an ALL-PAIRS surface: any two nodes can end up side by side, unlike a bar
+# chart where only neighbours need separating. Validating the eight-hue categorical palette under
+# all-pairs FAILED — worst normal-vision ΔE 7.1 (red vs orange, hard to tell apart even with full
+# colour vision) and worst CVD ΔE 1.6 (magenta vs aqua under deuteranopia, effectively identical).
+# No five-hue subset passes either; exactly two four-hue subsets do.
+#
+# So the nine node types are grouped into four validated families plus a neutral for provenance.
+# The chosen four pass every check against this surface, with one CVD warn (green↔yellow, ΔE 6.9)
+# which is permitted only alongside a secondary encoding — here every node is directly labelled on
+# the canvas and hovering shows its exact type.
+FAMILY_COLOR = {
+    "adversary": "#d55181",    # who is doing it
+    "capability": "#c98500",   # what they deploy
+    "technique": "#008300",    # how, and the weakness used
+    "observable": "#3987e5",   # what you can detect — the large majority of nodes
+    "provenance": "#6b7280",   # report nodes; neutral grey, deliberately not a series colour
 }
-DEFAULT_STYLE = ("#8a8a8a", "dot")
+
+TYPE_FAMILY = {
+    "threat-actor": "adversary",
+    "campaign": "adversary",
+    "malware": "capability",
+    "tool": "capability",
+    "attack-pattern": "technique",
+    "vulnerability": "technique",
+    "indicator": "observable",
+    "infrastructure": "observable",
+    "report": "provenance",
+}
+
+# Kept short on purpose: the legend sits in a narrow column, and a long label is clipped rather
+# than wrapped. The full membership is spelled out in a caption underneath.
+FAMILY_LABEL = {
+    "adversary": "Adversary",
+    "capability": "Capability",
+    "technique": "Technique",
+    "observable": "Observable",
+    "provenance": "Report",
+}
+
+FAMILY_MEMBERS = {
+    "adversary": "threat actors, campaigns",
+    "capability": "malware, tools",
+    "technique": "attack patterns, vulnerabilities",
+    "observable": "indicators, infrastructure",
+    "provenance": "source reports",
+}
+
+SURFACE = "#0E1117"
+EDGE_COLOR = "#3f4654"
+EDGE_HIGHLIGHT = "#8ea2c6"
+LABEL_COLOR = "#d6dae2"
+SELECTED_RING = "#f5f7fa"
 
 BREADCRUMB_LIMIT = 8
 
+MIN_NODE_SIZE = 11
+MAX_NODE_SIZE = 34
 
-def _style(node_type: str) -> tuple[str, str]:
-    return TYPE_STYLE.get(node_type, DEFAULT_STYLE)
+
+def family_of(node_type: str) -> str:
+    return TYPE_FAMILY.get(node_type, "observable")
+
+
+def color_of(node_type: str) -> str:
+    return FAMILY_COLOR[family_of(node_type)]
+
+
+def _node_size(degree: int, max_degree: int, selected: bool) -> int:
+    """Size by connectedness, so hubs read as hubs.
+
+    Square root rather than linear: degree is long-tailed, and a linear scale would make one hub
+    enormous and flatten everything else into identical dots.
+    """
+    if selected:
+        return MAX_NODE_SIZE + 6
+    if max_degree <= 1:
+        return MIN_NODE_SIZE
+    share = (degree / max_degree) ** 0.5
+    return int(MIN_NODE_SIZE + share * (MAX_NODE_SIZE - MIN_NODE_SIZE))
+
+
+def _node_color(node_type: str, selected: bool) -> dict:
+    """vis.js colour object: fill, border, and the hover/selected states."""
+    base = color_of(node_type)
+    return {
+        "background": base,
+        "border": SELECTED_RING if selected else base,
+        "highlight": {"background": base, "border": SELECTED_RING},
+        "hover": {"background": base, "border": EDGE_HIGHLIGHT},
+    }
 
 
 def _label(attributes: dict) -> str:
@@ -223,7 +298,7 @@ def main() -> None:
         st.page_link("pages/1_Ingest.py", label="Ingest a report", icon=":material/upload:")
         return
 
-    controls, canvas, detail = st.columns([1, 2, 1.4])
+    controls, canvas, detail = st.columns([1, 2.4, 1.3])
 
     with controls:
         st.caption(f"Loaded version {version}")
@@ -262,9 +337,36 @@ def main() -> None:
         max_nodes = st.slider("Max nodes", 20, 300, 150, step=10)
 
         st.caption("Legend")
+        families = []
         for node_type in present_types:
-            colour, shape = _style(node_type)
-            st.caption(f"{node_type} — {shape}")
+            family = family_of(node_type)
+            if family not in families:
+                families.append(family)
+        if show_reports and "provenance" not in families:
+            families.append("provenance")
+
+        legend = pd.DataFrame(
+            {"": ["" for _ in families], "group": [FAMILY_LABEL[f] for f in families]}
+        )
+        # Styler, not markdown: this paints the exact node colours without any HTML of our own.
+        st.dataframe(
+            legend.style.apply(
+                lambda _col: [f"background-color: {FAMILY_COLOR[f]}" for f in families], subset=[""]
+            ),
+            use_container_width=True,
+            hide_index=True,
+            height=min(42 + 35 * len(families), 260),
+        )
+        st.caption(
+            "\n".join(
+                f"{FAMILY_LABEL[f]}: {FAMILY_MEMBERS[f]}" for f in families
+            )
+        )
+        st.caption(
+            "Types are grouped rather than each getting its own hue: on a canvas where any two "
+            "nodes can sit side by side, eight hues are not reliably distinguishable. Node size "
+            "reflects how connected it is; hover a node for its exact type."
+        )
 
         trail = st.session_state.get("graph_trail", [])
         if len(trail) > 1:
@@ -301,29 +403,62 @@ def main() -> None:
         else:
             st.caption(f"Most connected nodes ({view.number_of_nodes()}). Select one to explore.")
 
+        degrees = {identifier: view.degree(identifier) for identifier in view.nodes()}
+        max_degree = max(degrees.values()) if degrees else 1
+
         agraph_nodes = []
         for identifier, attributes in view.nodes(data=True):
             node_type = attributes.get("type", "")
             if node_type != "report" and type_filter and node_type not in type_filter:
                 continue
-            colour, shape = _style(node_type)
             is_selected = identifier == selected
             agraph_nodes.append(
                 Node(
                     id=identifier,
                     # Labels carry report-derived names; agraph renders them as plain text.
                     label=_label(attributes),
-                    size=26 if is_selected else 16,
-                    color="#ffffff" if is_selected else colour,
-                    borderWidth=4 if is_selected else 1,
-                    shape=shape,
-                    title=node_type,
+                    # Round for every type, as requested. Type is carried by colour family, the
+                    # hover title and the detail panel rather than by shape.
+                    shape="dot",
+                    size=_node_size(degrees.get(identifier, 1), max_degree, is_selected),
+                    color=_node_color(node_type, is_selected),
+                    borderWidth=3 if is_selected else 0,
+                    borderWidthSelected=3,
+                    title=f"{node_type} · {degrees.get(identifier, 0)} connection(s)",
+                    font={
+                        "color": SELECTED_RING if is_selected else LABEL_COLOR,
+                        "size": 15 if is_selected else 12,
+                        "face": "Inter, Helvetica, Arial, sans-serif",
+                        # A halo in the surface colour keeps labels readable where edges cross.
+                        "strokeWidth": 3,
+                        "strokeColor": SURFACE,
+                        "vadjust": -2,
+                    },
                 )
             )
 
         visible = {node.id for node in agraph_nodes}
         agraph_edges = [
-            Edge(source=source, target=target, label="" if key == REPORTED_IN else str(key))
+            Edge(
+                source=source,
+                target=target,
+                label="" if key == REPORTED_IN else str(key),
+                color={"color": EDGE_COLOR, "highlight": EDGE_HIGHLIGHT, "hover": EDGE_HIGHLIGHT},
+                width=1,
+                selectionWidth=2,
+                # Curved edges separate the several relations two nodes can have, which a
+                # MultiDiGraph produces routinely and straight lines would draw on top of itself.
+                smooth={"type": "continuous", "roundness": 0.18},
+                arrows={"to": {"enabled": True, "scaleFactor": 0.45}},
+                font={
+                    "color": "#9aa3b2",
+                    "size": 10,
+                    "face": "Inter, Helvetica, Arial, sans-serif",
+                    "strokeWidth": 3,
+                    "strokeColor": SURFACE,
+                    "align": "middle",
+                },
+            )
             for source, target, key, data in view.edges(keys=True, data=True)
             if source in visible
             and target in visible
@@ -334,14 +469,60 @@ def main() -> None:
             nodes=agraph_nodes,
             edges=agraph_edges,
             config=Config(
-                width=720,
-                height=560,
+                # Fixed pixel width inside a responsive column: too wide and the
+                # canvas is cropped at the column edge, which clipped the selected
+                # node. Sized to fit the narrower end of realistic viewports.
+                width=620,
+                height=660,
                 directed=True,
                 physics=True,
                 hierarchical=False,
                 nodeHighlightBehavior=True,
-                highlightColor="#f6c344",
+                highlightColor=EDGE_HIGHLIGHT,
                 collapsible=False,
+                # Config passes unknown kwargs straight through to vis.js options.
+                backgroundColor=SURFACE,
+                # Repulsion over the default barnesHut: it spaces a small, dense neighbourhood
+                # evenly instead of flinging low-degree nodes to the rim, which is the shape this
+                # graph actually has — one hub with many single-edge indicators hanging off it.
+                solver="repulsion",
+                repulsion={
+                    # Spacing is a legibility trade: pulling nodes closer lets vis fit more on
+                    # screen, but it then zooms out until the labels are unreadable, which defeats
+                    # the point. These values keep labels legible and rely on the canvas width
+                    # being set to fit its column so nothing is cropped.
+                    "nodeDistance": 155,
+                    "centralGravity": 0.2,
+                    "springLength": 140,
+                    "springConstant": 0.04,
+                    "damping": 0.22,
+                },
+                stabilization={"enabled": True, "iterations": 220, "fit": True},
+                nodes={
+                    "shape": "dot",
+                    "borderWidthSelected": 3,
+                    "shadow": {
+                        "enabled": True,
+                        "color": "rgba(0,0,0,0.45)",
+                        "size": 12,
+                        "x": 0,
+                        "y": 2,
+                    },
+                    "scaling": {"label": {"enabled": False}},
+                },
+                edges={
+                    "selectionWidth": 2,
+                    "hoverWidth": 1.5,
+                    "smooth": {"type": "continuous", "roundness": 0.18},
+                },
+                interaction={
+                    "hover": True,
+                    "tooltipDelay": 120,
+                    "navigationButtons": False,
+                    "keyboard": False,
+                    "multiselect": False,
+                    "hideEdgesOnDrag": True,
+                },
             ),
         )
 

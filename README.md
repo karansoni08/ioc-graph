@@ -224,6 +224,21 @@ listed by `python scripts/maintain.py duplicates` for a human to judge, and a re
 recorded by editing `graph/aliases.json`. Automatic fuzzy merging would eventually merge two genuinely different threat
 actors, which is a worse failure than a duplicate node.
 
+**Node colour groups related types rather than giving each its own hue.** A node-link canvas is an
+*all-pairs* surface — any two nodes can end up adjacent, unlike a bar chart where only neighbours
+need separating. Validating the eight-hue categorical palette under all-pairs failed outright:
+worst normal-vision ΔE 7.1 (red vs orange, hard to tell apart even with full colour vision) and
+worst colour-vision-deficient ΔE 1.6 (magenta vs aqua under deuteranopia, effectively identical).
+No five-hue subset passes; exactly two four-hue subsets do.
+
+So the nine types collapse into four validated families — Adversary, Capability, Technique,
+Observable — plus a neutral grey for report nodes. The chosen four pass every check against this
+surface. One pair sits in the CVD warn band, which is permitted only alongside a secondary
+encoding: every node is directly labelled on the canvas and hovering gives its exact type.
+
+Nodes are round, sized by degree on a square-root scale, so hubs read as hubs without one
+outlier flattening everything else into identical dots.
+
 **The view is always a neighborhood**, never the whole graph, because past a few hundred nodes a
 full graph is an unreadable hairball. Clicking a node in the canvas, or a relationship in the detail
 panel, navigates to it, and a breadcrumb tracks where you have been.
