@@ -68,13 +68,18 @@ def cmd_duplicates(args) -> int:
     pairs = find_possible_duplicates(graph, threshold=args.threshold)
     if not pairs:
         print(f"No candidate duplicates at similarity >= {args.threshold}.")
-        return 0
+    else:
+        print(f"{len(pairs)} candidate pair(s) at similarity >= {args.threshold}:\n")
+        for left, right, score in pairs:
+            left_name = graph.nodes[left].get("name", left)
+            right_name = graph.nodes[right].get("name", right)
+            print(
+                f"  {score:5.1f}  [{graph.nodes[left].get('type','')}]  "
+                f"{left_name!r}  ~  {right_name!r}"
+            )
 
-    print(f"{len(pairs)} candidate pair(s) at similarity >= {args.threshold}:\n")
-    for left, right, score in pairs:
-        left_name = graph.nodes[left].get("name", left)
-        right_name = graph.nodes[right].get("name", right)
-        print(f"  {score:5.1f}  [{graph.nodes[left].get('type','')}]  {left_name!r}  ~  {right_name!r}")
+    # Runs whether or not the fuzzy scan found anything: it is a different question.
+    _report_same_name_pairs(graph)
     print(
         f"\nNothing was merged. To record a real merge, add an entry to {ALIASES_PATH} mapping "
         "the alias key to the canonical key, then re-ingest the affected reports.\n"
@@ -82,6 +87,39 @@ def cmd_duplicates(args) -> int:
         "actors is worse than keeping a duplicate node."
     )
     return 0
+
+
+def _report_same_name_pairs(graph) -> None:
+    """Nodes sharing a name across different types.
+
+    The fuzzy scan deliberately never pairs different types — "Akira" the group and "Akira" the
+    ransomware are genuinely two things, and merging them would be wrong. But the case is still
+    worth seeing: an advisory that names the group and its malware identically often yields one
+    well-connected node and one near-empty stub, and the stub is easy to select by accident.
+    Listed, never merged.
+    """
+    by_name: dict[str, list[tuple[str, str, int]]] = {}
+    for identifier, attributes in graph.nodes(data=True):
+        if attributes.get("type") == "report":
+            continue
+        name = (attributes.get("name") or "").strip().casefold()
+        if name:
+            by_name.setdefault(name, []).append(
+                (identifier, attributes.get("type", ""), graph.degree(identifier))
+            )
+
+    shared = {n: v for n, v in by_name.items() if len({t for _, t, _ in v}) > 1}
+    if not shared:
+        return
+
+    print(f"\n{len(shared)} name(s) used by more than one type (listed, not merged):")
+    for name, entries in sorted(shared.items()):
+        parts = ", ".join(f"{t} (degree {d})" for _, t, d in sorted(entries, key=lambda e: -e[2]))
+        print(f"  {name!r}: {parts}")
+    print(
+        "  These are usually legitimate — a group and its malware sharing a name — but the "
+        "low-degree one is easy to select by mistake in the explorer."
+    )
 
 
 def cmd_export(args) -> int:

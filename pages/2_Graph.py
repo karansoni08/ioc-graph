@@ -298,7 +298,16 @@ def main() -> None:
         st.page_link("pages/1_Ingest.py", label="Ingest a report", icon=":material/upload:")
         return
 
-    controls, canvas, detail = st.columns([1, 2.4, 1.3])
+    # The canvas spans the full width at the top; controls and details sit underneath.
+    #
+    # Streamlit executes top to bottom, and the graph depends on every control value, so the
+    # controls must RUN before it. st.container reserves a slot that can be written to later:
+    # the controls execute first and render below, while the graph executes afterwards and
+    # renders into the slot above them. Without this the widgets would have to be read from
+    # session_state a run behind, and every filter change would lag by one interaction.
+    canvas = st.container()
+    st.divider()
+    controls, detail = st.columns([1, 1.25])
 
     with controls:
         st.caption(f"Loaded version {version}")
@@ -357,11 +366,10 @@ def main() -> None:
             hide_index=True,
             height=min(42 + 35 * len(families), 260),
         )
-        st.caption(
-            "\n".join(
-                f"{FAMILY_LABEL[f]}: {FAMILY_MEMBERS[f]}" for f in families
-            )
-        )
+        # One caption per family: st.caption collapses newlines, so a joined string ran the
+        # four groups together into a single unreadable line.
+        for family in families:
+            st.caption(f"{FAMILY_LABEL[family]}: {FAMILY_MEMBERS[family]}")
         st.caption(
             "Types are grouped rather than each getting its own hue: on a canvas where any two "
             "nodes can sit side by side, eight hues are not reliably distinguishable. Node size "
@@ -401,7 +409,7 @@ def main() -> None:
                 f"({view.number_of_nodes()} nodes)"
             )
         else:
-            st.caption(f"Most connected nodes ({view.number_of_nodes()}). Select one to explore.")
+            st.caption(f"Most connected nodes ({view.number_of_nodes()}). Click one, or search below.")
 
         degrees = {identifier: view.degree(identifier) for identifier in view.nodes()}
         max_degree = max(degrees.values()) if degrees else 1
@@ -469,11 +477,11 @@ def main() -> None:
             nodes=agraph_nodes,
             edges=agraph_edges,
             config=Config(
-                # Fixed pixel width inside a responsive column: too wide and the
-                # canvas is cropped at the column edge, which clipped the selected
-                # node. Sized to fit the narrower end of realistic viewports.
-                width=620,
-                height=660,
+                # The canvas is now full width rather than one column of three, so it can be
+                # far larger. Still a fixed pixel size, so it is set to fit the content area of
+                # a ~1280px laptop; wider than that and narrow screens crop it.
+                width=1000,
+                height=760,
                 directed=True,
                 physics=True,
                 hierarchical=False,
@@ -491,9 +499,9 @@ def main() -> None:
                     # screen, but it then zooms out until the labels are unreadable, which defeats
                     # the point. These values keep labels legible and rely on the canvas width
                     # being set to fit its column so nothing is cropped.
-                    "nodeDistance": 155,
-                    "centralGravity": 0.2,
-                    "springLength": 140,
+                    "nodeDistance": 180,
+                    "centralGravity": 0.15,
+                    "springLength": 165,
                     "springConstant": 0.04,
                     "damping": 0.22,
                 },
@@ -534,7 +542,7 @@ def main() -> None:
         if selected:
             render_detail(graph, selected)
         else:
-            st.caption("Click a node, or search on the left, to see its details.")
+            st.caption("Click a node in the graph, or use the search below, to see its details.")
 
 
 main()

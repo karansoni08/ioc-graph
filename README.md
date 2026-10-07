@@ -239,6 +239,9 @@ encoding: every node is directly labelled on the canvas and hovering gives its e
 Nodes are round, sized by degree on a square-root scale, so hubs read as hubs without one
 outlier flattening everything else into identical dots.
 
+The canvas spans the full page width, with the controls and the detail panel underneath it, so
+the graph gets the room rather than being squeezed between two sidebars.
+
 **The view is always a neighborhood**, never the whole graph, because past a few hundred nodes a
 full graph is an unreadable hairball. Clicking a node in the canvas, or a relationship in the detail
 panel, navigates to it, and a breadcrumb tracks where you have been.

@@ -636,3 +636,65 @@ class TestIsolatedIndicatorFallback:
         merge_report(graph, doc_a, iocs_a, analysis_a)
         sub = neighborhood(graph, "threat-actor--apt21", depth=1, include_reports=False)
         assert report_node_id(doc_a.sha256) not in sub
+
+
+class TestSameNameAcrossTypes:
+    """A name used by two different types is a real case the fuzzy scan cannot see.
+
+    `find_possible_duplicates` never pairs different types, deliberately: "Akira" the group and
+    "Akira" the ransomware are two things and merging them would be wrong. But on the real graph
+    four names do this — ransomhub, cobalt strike, cve-2023-34362, moveit transfer — and the
+    low-degree twin is easy to select by accident in the explorer, which looks like a bug when the
+    detail panel reports no relationships.
+    """
+
+    def _graph_with_twins(self):
+        graph = new_graph()
+        graph.add_node("threat-actor--ransomhub", type="threat-actor", name="RansomHub")
+        graph.add_node("malware--ransomhub", type="malware", name="RansomHub")
+        graph.add_node("tool--mimikatz", type="tool", name="Mimikatz")
+        return graph
+
+    def test_fuzzy_detection_still_ignores_cross_type_pairs(self) -> None:
+        graph = self._graph_with_twins()
+        assert find_possible_duplicates(graph, threshold=90) == []
+
+    def test_the_cli_reports_them_separately(self, capsys) -> None:
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path.cwd() / "scripts"))
+        from maintain import _report_same_name_pairs
+
+        _report_same_name_pairs(self._graph_with_twins())
+        out = capsys.readouterr().out
+        assert "ransomhub" in out
+        assert "threat-actor" in out and "malware" in out
+        assert "Mimikatz" not in out, "a uniquely named node should not be listed"
+
+    def test_nothing_is_reported_when_names_are_unique(self, capsys) -> None:
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path.cwd() / "scripts"))
+        from maintain import _report_same_name_pairs
+
+        graph = new_graph()
+        graph.add_node("tool--mimikatz", type="tool", name="Mimikatz")
+        graph.add_node("malware--akira", type="malware", name="Akira")
+        _report_same_name_pairs(graph)
+        assert capsys.readouterr().out == ""
+
+    def test_report_nodes_are_excluded(self, capsys) -> None:
+        """Two reports can share a filename without that meaning anything."""
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path.cwd() / "scripts"))
+        from maintain import _report_same_name_pairs
+
+        graph = new_graph()
+        graph.add_node("report--aaa", type="report", name="advisory.pdf")
+        graph.add_node("malware--advisory.pdf", type="malware", name="advisory.pdf")
+        _report_same_name_pairs(graph)
+        assert capsys.readouterr().out == ""
