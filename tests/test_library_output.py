@@ -385,11 +385,23 @@ class TestSelectorStatePersistence:
     def test_an_upload_clears_a_remembered_library_choice(self) -> None:
         """Otherwise a stale library report would shadow a freshly uploaded one."""
         source = self._choose_source()
-        upload_block = source[source.index("with upload_tab:") : source.index("with library_tab:")]
+        upload_block = source[
+            source.index('st.subheader("Upload a report")') : source.index(
+                'st.subheader("Report library")'
+            )
+        ]
         assert 'st.session_state.pop("library_choice", None)' in upload_block
 
     def test_the_selection_can_be_cleared(self) -> None:
         assert "Clear selection" in self._choose_source()
+
+    def test_both_sources_are_on_one_page_with_upload_first(self) -> None:
+        """They were two tabs, which hid the library from anyone who had no report of their own."""
+        source = self._choose_source()
+        assert "st.tabs" not in source
+        assert source.index('st.subheader("Upload a report")') < source.index(
+            'st.subheader("Report library")'
+        )
 
 
 class TestAutoMergeGuard:

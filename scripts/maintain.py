@@ -9,6 +9,7 @@ The capability is unchanged — it simply lives here now, where it is scriptable
 destructive action requires typing a flag rather than clicking a button.
 
     python scripts/maintain.py stats
+    python scripts/maintain.py usage
     python scripts/maintain.py duplicates --threshold 90
     python scripts/maintain.py export --out graph.json
     python scripts/maintain.py backups
@@ -59,6 +60,30 @@ def cmd_stats(args) -> int:
             f"  {report.get('filename', '?'):40} {report.get('ingested_at', '')[:19]}  "
             f"mode={report.get('mode', '?')}  {format_cost(report.get('cost_usd', 0.0))}"
         )
+    return 0
+
+
+def cmd_usage(args) -> int:
+    """Today's usage against the daily caps.
+
+    This was a sidebar widget. It was removed from the app because it showed every visitor a
+    budget that is the owner's business; the caps are still enforced before every spend.
+    """
+    settings, store, _, _ = _load()
+    from usage import today_key, usage_summary  # noqa: PLC0415 — keeps CLI startup cheap
+
+    summary = usage_summary(store, settings)
+    if summary is None:
+        print("This storage backend does not track usage.", file=sys.stderr)
+        return 1
+
+    print(f"today ({today_key(settings)}, timezone {settings.app_timezone}):")
+    print(f"  reports     {summary['reports']}/{settings.daily_report_limit}")
+    print(f"  agent runs  {summary['agent_runs']}/{settings.daily_agent_limit}")
+    print(
+        f"  spend       ${float(summary['spend_usd']):.2f}/"
+        f"${settings.daily_spend_limit_usd:.2f}"
+    )
     return 0
 
 
@@ -258,6 +283,10 @@ def main() -> int:
 
     sub.add_parser("stats", help="graph size, node types and ingested reports").set_defaults(
         func=cmd_stats
+    )
+
+    sub.add_parser("usage", help="today's reports / agent runs / spend against the caps").set_defaults(
+        func=cmd_usage
     )
 
     duplicates = sub.add_parser("duplicates", help="candidate duplicate nodes for human review")

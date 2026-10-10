@@ -143,20 +143,32 @@ def require_access() -> Access:
 
 
 def render_sidebar(access: Access) -> None:
-    """Usage against the daily caps, and log out."""
+    """Log out.
+
+    This used to also show today's reports / agent runs / spend as a four-line block. That moved
+    to a one-line strip at the top of the graph page (`render_usage_strip`), which is where it is
+    actually looked at. The caps themselves are untouched and still enforced in `usage.reserve`
+    before anything spends; the same numbers are also available from the command line with
+    `python scripts/maintain.py usage`.
+    """
     with st.sidebar:
-        render_usage_widget()
         if st.button("Log out"):
             for key in (_SESSION_AUTHED, _SESSION_ATTEMPTS, _SESSION_LOCKED_UNTIL):
                 st.session_state.pop(key, None)
             st.rerun()
 
 
-def render_usage_widget() -> None:
-    """Today's usage against the daily caps.
+def render_usage_strip() -> None:
+    """Today's usage against the daily caps, as one compact line at the top of the page.
 
-    These matter more than they used to: with a single password, everyone who is in can spend,
-    so this is the only ceiling on what a shared link costs.
+    Deliberately built from a native widget rather than a styled HTML bar. A true
+    `position: sticky` strip needs injected CSS, and this repo bans `unsafe_allow_html` and
+    `st.html` outright — the ban is mechanical (a test fails the build) precisely so it cannot be
+    eroded one cosmetic exception at a time. So this sits at the top of the page rather than
+    following the scroll.
+
+    Every value is produced by this app's own storage and formatted as a number here, so no
+    report- or model-derived text can reach the renderer.
     """
     from config import get_settings
     from storage.factory import get_store
@@ -166,13 +178,19 @@ def render_usage_widget() -> None:
     try:
         summary = usage_summary(get_store(settings), settings)
     except Exception:
+        # The usage readout must never be the reason a page fails to load.
         return
     if summary is None:
         return
 
-    st.caption(f"Today ({today_key(settings)})")
-    st.text(
-        f"reports    {summary['reports']}/{settings.daily_report_limit}\n"
-        f"agent runs {summary['agent_runs']}/{settings.daily_agent_limit}\n"
-        f"spend      ${float(summary['spend_usd']):.2f}/${settings.daily_spend_limit_usd:.2f}"
+    # Spend is labelled "USD" rather than written with "$". st.caption renders markdown, and
+    # Streamlit treats a $...$ span as inline LaTeX, so "$0.00/$2.00" lost both signs and set the
+    # numbers in math italics. A backslash escape did not survive that preprocessing either, so
+    # the currency is named instead of symbolised.
+    st.caption(
+        f"{today_key(settings)}  ·  "
+        f"reports {int(summary['reports'])}/{settings.daily_report_limit}  ·  "
+        f"agents {int(summary['agent_runs'])}/{settings.daily_agent_limit}  ·  "
+        f"spend {float(summary['spend_usd']):.2f}/"
+        f"{settings.daily_spend_limit_usd:.2f} USD"
     )

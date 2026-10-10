@@ -239,3 +239,37 @@ class TestConfiguredPassword:
         """These leaked into a chat transcript or were dictionary-based."""
         weak = {"forensics@regex", "forensics@llm", "password", "changeme"}
         assert config.get_app_password() not in weak
+
+
+class TestUsageStrip:
+    """The one-line usage readout at the top of the graph page."""
+
+    def test_the_strip_contains_no_dollar_sign(self) -> None:
+        """st.caption renders markdown, and Streamlit reads "$0.00/$2.00" as inline LaTeX.
+
+        It ate both signs and set the figures in math italics. A backslash escape did not
+        survive the preprocessing either, so the currency is spelled out instead.
+        """
+        source = Path("auth.py").read_text(encoding="utf-8")
+        strip = source[source.index("def render_usage_strip") :]
+        body = strip[strip.index("st.caption(") :]
+        assert "$" not in body, "a $ in the strip will be swallowed by Streamlit's LaTeX pass"
+        assert "USD" in body
+
+    def test_it_does_not_reach_for_raw_html(self) -> None:
+        """A sticky bar would need injected CSS; the ban on that is deliberate and absolute."""
+        source = Path("auth.py").read_text(encoding="utf-8")
+        assert "unsafe_allow_html=" not in source
+        assert "st.html(" not in source
+
+    def test_a_storage_failure_does_not_break_the_page(self, configured, monkeypatch) -> None:
+        """The readout is informational; it must never be why the graph fails to load."""
+        import auth as auth_module
+
+        stub = make_streamlit_stub()
+        monkeypatch.setattr(auth_module, "st", stub)
+        monkeypatch.setattr(
+            "storage.factory.get_store",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("backend down")),
+        )
+        auth_module.render_usage_strip()  # must not raise

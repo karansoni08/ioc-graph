@@ -75,9 +75,11 @@ Implement the `GraphStore` interface from Phase 4 on top of the schema:
   which daily limit was reached and when it resets (midnight `APP_TIMEZONE`).
 - After the call, `settle_usage` with the actual cost.
 - Sidebar widget: today's reports / agent runs / spend vs limits.
-- Ingest page banner (always visible): "Public reports only. Do not upload internal,
+- ~~Ingest page banner (always visible): "Public reports only. Do not upload internal,
   confidential or client documents. Uploaded files are processed and discarded; only
-  extracted results are stored."
+  extracted results are stored."~~ Removed on request after deployment: the workspace is
+  password-gated and shared with a few known peers, who do not need the warning on every
+  visit. Do not re-add it without asking.
 - "Your name" free-text field on Ingest (required for upload role), saved as
   `ingested_by`. Strip to 50 chars, plain text.
 

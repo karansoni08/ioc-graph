@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 from streamlit_agraph import Config, Edge, Node, agraph
 
-from auth import require_access
+from auth import render_usage_strip, require_access
 from config import get_settings, has_api_key
 from extract.display import defang
 from graph.model import (
@@ -303,6 +303,10 @@ def render_detail(graph, node_id: str) -> None:
 
 def main() -> None:
     require_access()
+
+    # First thing on the page, above the title: the daily caps are the only ceiling on what a
+    # shared link costs, so they belong where they are seen rather than in the sidebar.
+    render_usage_strip()
 
     st.title("Explore the graph")
 

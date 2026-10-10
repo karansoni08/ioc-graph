@@ -840,89 +840,100 @@ def choose_source() -> tuple[str, bytes] | None:
     exactly the same ingestion path as uploads — sanitization included — because a published
     advisory is still a document from the internet.
 
+    Both sources are on this one page, stacked: upload first, then the library. They used to be
+    two tabs, which hid whichever one you were not looking at — and the library is the thing a
+    first-time visitor needs to see, since they have no report of their own to hand.
+
     The library choice is held in session state because Streamlit reruns the whole script on
     every interaction, and `st.button` is only True on the run where it was clicked. An earlier
     version returned early when that button was False, which silently discarded the loaded
     report on the next rerun: you could load a report and see its indicators, but clicking
-    "Add to graph" reset the page before the merge could run. So nothing in the tab bodies
-    returns; they only record a choice, and the decision is made once at the end.
+    "Add to graph" reset the page before the merge could run. So neither section returns; they
+    only record a choice, and the decision is made once at the end.
     """
-    upload_tab, library_tab = st.tabs(["Upload a report", "Report library"])
+    st.subheader("Upload a report")
+    upload = st.file_uploader(
+        "PDF or HTML threat report",
+        type=["pdf", "html", "htm"],
+        accept_multiple_files=False,
+    )
+    uploaded: tuple[str, bytes] | None = None
+    if upload is not None:
+        # An upload wins over a remembered library choice, so switching source is possible.
+        st.session_state.pop("library_choice", None)
+        uploaded = (upload.name, upload.getvalue())
 
-    with upload_tab:
-        upload = st.file_uploader(
-            "PDF or HTML threat report",
-            type=["pdf", "html", "htm"],
-            accept_multiple_files=False,
+    st.divider()
+    st.subheader("Report library")
+
+    reports = load_manifest()
+    if not reports:
+        st.warning("The report library manifest is missing or unreadable.")
+    else:
+        st.caption(
+            f"{len(reports)} public advisories published by CISA, in the public domain. "
+            f"{cached_count(settings)} already downloaded. They are fetched from the "
+            "publisher on first use and cached, so the first open of a report takes a few "
+            "seconds."
         )
-        if upload is not None:
-            # An upload wins over a remembered library choice, so switching source is possible.
-            st.session_state.pop("library_choice", None)
-            return upload.name, upload.getvalue()
+        if uploaded is not None:
+            st.caption("Your uploaded file is being used. Remove it above to pick one here.")
 
-    with library_tab:
-        reports = load_manifest()
-        if not reports:
-            st.warning("The report library manifest is missing or unreadable.")
+        chosen_categories = st.multiselect(
+            "Filter by category", options=categories(), default=categories()
+        )
+        visible = [r for r in reports if r.category in chosen_categories]
+
+        if not visible:
+            st.caption("No reports match the filter.")
         else:
-            st.caption(
-                f"{len(reports)} public advisories published by CISA, in the public domain. "
-                f"{cached_count(settings)} already downloaded. They are fetched from the "
-                "publisher on first use and cached, so the first open of a report takes a few "
-                "seconds."
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "advisory": r.advisory_id,
+                            "title": r.title,
+                            "category": r.category,
+                            "downloaded": "yes" if is_cached(r, settings) else "no",
+                        }
+                        for r in visible
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
             )
 
-            chosen_categories = st.multiselect(
-                "Filter by category", options=categories(), default=categories()
-            )
-            visible = [r for r in reports if r.category in chosen_categories]
+            labels = {r.label: r for r in visible}
+            picked = st.selectbox("Report", options=["(none)"] + list(labels))
 
-            if not visible:
-                st.caption("No reports match the filter.")
-            else:
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "advisory": r.advisory_id,
-                                "title": r.title,
-                                "category": r.category,
-                                "downloaded": "yes" if is_cached(r, settings) else "no",
-                            }
-                            for r in visible
-                        ]
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+            if picked != "(none)":
+                report = labels[picked]
+                st.text(report.description)
+                st.caption(f"Source: {report.source_page}")
 
-                labels = {r.label: r for r in visible}
-                picked = st.selectbox("Report", options=["(none)"] + list(labels))
+                if st.button("Load this report", type="primary", key="load_library"):
+                    try:
+                        with st.spinner(
+                            f"Fetching {report.advisory_id} from {report.publisher}…"
+                        ):
+                            data = fetch_report(report, settings)
+                    except IngestError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.session_state["library_choice"] = (report.filename, data)
 
-                if picked != "(none)":
-                    report = labels[picked]
-                    st.text(report.description)
-                    st.caption(f"Source: {report.source_page}")
+    if "library_choice" in st.session_state:
+        loaded_name = st.session_state["library_choice"][0]
+        st.success(f"Loaded: {loaded_name}")
+        if st.button("Clear selection", key="clear_library"):
+            st.session_state.pop("library_choice", None)
+            st.rerun()
 
-                    if st.button("Load this report", type="primary", key="load_library"):
-                        try:
-                            with st.spinner(
-                                f"Fetching {report.advisory_id} from {report.publisher}…"
-                            ):
-                                data = fetch_report(report, settings)
-                        except IngestError as exc:
-                            st.error(str(exc))
-                        else:
-                            st.session_state["library_choice"] = (report.filename, data)
-
-        if "library_choice" in st.session_state:
-            loaded_name = st.session_state["library_choice"][0]
-            st.success(f"Loaded: {loaded_name}")
-            if st.button("Clear selection", key="clear_library"):
-                st.session_state.pop("library_choice", None)
-                st.rerun()
+    st.divider()
 
     # One decision point, reached on every rerun regardless of which button was pressed.
+    if uploaded is not None:
+        return uploaded
     return st.session_state.get("library_choice")
 
 
@@ -930,11 +941,6 @@ def main() -> None:
     require_access()
 
     st.title("Ingest a report")
-    st.warning(
-        "Public reports only. Do not upload internal, confidential or client documents. "
-        "Uploaded files are processed in memory and discarded — only the extracted results are "
-        "stored."
-    )
     st.caption(
         f"Limits: {settings.max_file_mb} MB per file, {settings.max_pages} pages per PDF. "
         "Indicators come from regular expressions; entities and relationships come from Claude, "
